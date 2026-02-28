@@ -648,31 +648,52 @@ func (h *Handler) AdminLatestOTP(w http.ResponseWriter, r *http.Request) {
 
 	phone := strings.TrimSpace(r.URL.Query().Get("phone"))
 	email := strings.TrimSpace(r.URL.Query().Get("email"))
-	if (phone == "" && email == "") || (phone != "" && email != "") {
-		writeErrorJSON(w, http.StatusBadRequest, "provide exactly one query param: phone or email")
+	if phone == "" && email == "" {
+		writeErrorJSON(w, http.StatusBadRequest, "provide at least one query param: phone or email")
 		return
 	}
 
-	channel := domain.OTPChannelEmail
-	destination := email
-	if phone != "" {
-		channel = domain.OTPChannelWhatsApp
-		destination = phone
+	type otpLookupTarget struct {
+		channel     domain.OTPChannel
+		destination string
 	}
 
-	otpCode, err := h.otp.GetLatestTestingOTP(r.Context(), channel, destination)
-	if err != nil {
+	targets := make([]otpLookupTarget, 0, 2)
+	if phone != "" {
+		targets = append(targets, otpLookupTarget{
+			channel:     domain.OTPChannelWhatsApp,
+			destination: phone,
+		})
+	}
+	if email != "" {
+		targets = append(targets, otpLookupTarget{
+			channel:     domain.OTPChannelEmail,
+			destination: email,
+		})
+	}
+
+	for idx, target := range targets {
+		otpCode, err := h.otp.GetLatestTestingOTP(r.Context(), target.channel, target.destination)
+		if err == nil {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(otpCode.Code))
+			return
+		}
+
 		if errors.Is(err, service.ErrOTPTestingCodeNotFound) {
+			if idx < len(targets)-1 {
+				continue
+			}
 			writeErrorJSON(w, http.StatusNotFound, "otp not found")
 			return
 		}
+
 		writeErrorJSON(w, http.StatusBadRequest, "invalid destination")
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(otpCode.Code))
+	writeErrorJSON(w, http.StatusNotFound, "otp not found")
 }
 
 func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {

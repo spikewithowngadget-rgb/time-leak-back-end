@@ -455,7 +455,7 @@ const swaggerSpec = `{
     "/api/v1/admin/testing/otp/latest": {
       "get": {
         "summary": "Get latest OTP code (DEV ONLY)",
-        "description": "DEV ONLY: returns OTP code in plain text for testing. Must be disabled in non-dev environments via ENABLE_TESTING_ENDPOINTS=false.",
+        "description": "DEV ONLY: returns OTP code in plain text for testing. Requires ENABLE_TESTING_ENDPOINTS=true. Provide phone or email (if both are set, phone is checked first).",
         "parameters": [
           { "name": "phone", "in": "query", "schema": { "type": "string" } },
           { "name": "email", "in": "query", "schema": { "type": "string", "format": "email" } }

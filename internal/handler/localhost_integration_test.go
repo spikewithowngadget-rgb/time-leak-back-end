@@ -266,6 +266,48 @@ func TestLocalhostServer_AdminLatestOTP_NoAuthTokenRequired(t *testing.T) {
 	}
 }
 
+func TestLocalhostServer_AdminLatestOTP_BothQueryParamsFallbackToEmail(t *testing.T) {
+	srv := newLocalTestServerWithTestingEndpoints(t, true)
+	defer srv.Close()
+
+	otpReqResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/otp/request", map[string]any{
+		"channel": "email",
+		"email":   "otp-fallback@example.com",
+	})
+	if otpReqResp.StatusCode != http.StatusOK {
+		t.Fatalf("otp request status: got %d want 200", otpReqResp.StatusCode)
+	}
+	_ = otpReqResp.Body.Close()
+
+	req, err := http.NewRequest(
+		http.MethodGet,
+		srv.URL+"/api/v1/admin/testing/otp/latest?phone=%2B77015556677&email=otp-fallback@example.com",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("new request error: %v", err)
+	}
+
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		t.Fatalf("http request error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("latest otp status: got %d want 200", resp.StatusCode)
+	}
+
+	codeBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body error: %v", err)
+	}
+	code := strings.TrimSpace(string(codeBytes))
+	if len(code) != 6 {
+		t.Fatalf("expected 6-digit otp code, got %q", code)
+	}
+}
+
 func newLocalTestServer(t *testing.T) *httptest.Server {
 	return newLocalTestServerWithTestingEndpoints(t, false)
 }

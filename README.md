@@ -64,6 +64,12 @@ No manual migrate command is required.
 
 Swagger is static in `internal/handler/swagger.go`; regenerate by editing that file.
 
+### OTP Testing Endpoint (DEV ONLY)
+
+- Endpoint: `GET /api/v1/admin/testing/otp/latest`
+- Requires: `ENABLE_TESTING_ENDPOINTS=true`
+- Query: provide `phone` or `email` (if both are passed, `phone` is checked first, then `email`)
+
 ## Tests
 
 ```bash
