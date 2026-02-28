@@ -2,8 +2,12 @@ package database
 
 import (
 	"database/sql"
+	"embed"
+	"errors"
+	"fmt"
 	"os"
-	"time"
+	"sort"
+	"strings"
 	"time-leak/config"
 
 	"github.com/google/uuid"
@@ -11,11 +15,12 @@ import (
 	"go.uber.org/zap"
 )
 
-var _ = time.Second
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
 
 func InitDatabase(cfg *config.Config, logger *zap.Logger) (*sql.DB, error) {
 	if err := os.MkdirAll(cfg.DBPath, 0o755); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("mkdir db path: %w", err)
 	}
 
 	dbPath := cfg.GetDatabasePath()
@@ -23,7 +28,7 @@ func InitDatabase(cfg *config.Config, logger *zap.Logger) (*sql.DB, error) {
 
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 
 	db.SetMaxOpenConns(cfg.MaxOpenConns)
@@ -32,7 +37,7 @@ func InitDatabase(cfg *config.Config, logger *zap.Logger) (*sql.DB, error) {
 
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
-		return nil, err
+		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}
 
 	logger.Info("database initialized",
@@ -53,78 +58,109 @@ func GenerateUUID() string {
 	return uuid.New().String()
 }
 
+// CreateTables is kept for backward compatibility and now applies SQL migrations.
 func CreateTables(db *sql.DB, logger *zap.Logger) error {
-	usersTable := `
-	CREATE TABLE IF NOT EXISTS users (
-		id TEXT PRIMARY KEY,
-		email TEXT NOT NULL UNIQUE,
-		password TEXT NOT NULL,
-		user_language TEXT NOT NULL DEFAULT 'en',
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	);
-	`
-
-	notesTable := `
-	CREATE TABLE IF NOT EXISTS notes (
-		id TEXT PRIMARY KEY,
-		user_id TEXT NOT NULL,
-		note_type TEXT NOT NULL,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-	);
-	`
-
-	refreshTokensTable := `
-	CREATE TABLE IF NOT EXISTS refresh_tokens (
-		token TEXT PRIMARY KEY,
-		user_id TEXT NOT NULL,
-		email TEXT NOT NULL,
-		expires_at DATETIME NOT NULL,
-		revoked INTEGER NOT NULL DEFAULT 0,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-	);
-	`
-
-	if _, err := db.Exec(usersTable); err != nil {
-		logger.Error("failed creating users table", zap.Error(err))
-		return err
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			name TEXT PRIMARY KEY,
+			applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+	`); err != nil {
+		return fmt.Errorf("create schema_migrations: %w", err)
 	}
-	if _, err := db.Exec(notesTable); err != nil {
-		logger.Error("failed creating notes table", zap.Error(err))
-		return err
-	}
-	if _, err := db.Exec(refreshTokensTable); err != nil {
-		logger.Error("failed creating refresh_tokens table", zap.Error(err))
+
+	applied, err := getAppliedMigrations(db)
+	if err != nil {
 		return err
 	}
 
-	indexes := []string{
-		`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);`,
-		`CREATE INDEX IF NOT EXISTS idx_notes_user_id ON notes(user_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes(created_at);`,
-		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);`,
+	entries, err := migrationsFS.ReadDir("migrations")
+	if err != nil {
+		return fmt.Errorf("read embedded migrations: %w", err)
 	}
-	for _, idx := range indexes {
-		if _, err := db.Exec(idx); err != nil {
-			logger.Warn("failed creating index", zap.String("sql", idx), zap.Error(err))
+
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(entry.Name(), ".sql") {
+			names = append(names, entry.Name())
 		}
 	}
+	sort.Strings(names)
 
-	trigger := `
-	CREATE TRIGGER IF NOT EXISTS trigger_users_updated_at
-	AFTER UPDATE ON users
-	FOR EACH ROW
-	BEGIN
-		UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
-	END;
-	`
-	if _, err := db.Exec(trigger); err != nil {
-		logger.Warn("failed creating users updated_at trigger", zap.Error(err))
+	for _, name := range names {
+		if applied[name] {
+			continue
+		}
+
+		raw, readErr := migrationsFS.ReadFile("migrations/" + name)
+		if readErr != nil {
+			return fmt.Errorf("read migration %s: %w", name, readErr)
+		}
+
+		tx, beginErr := db.Begin()
+		if beginErr != nil {
+			return fmt.Errorf("begin migration %s: %w", name, beginErr)
+		}
+
+		_, execErr := tx.Exec(string(raw))
+		if execErr != nil {
+			if !isIgnorableMigrationError(execErr) {
+				_ = tx.Rollback()
+				return fmt.Errorf("exec migration %s: %w", name, execErr)
+			}
+			logger.Warn("ignoring idempotent migration error",
+				zap.String("migration", name),
+				zap.Error(execErr),
+			)
+		}
+
+		if _, insErr := tx.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, name); insErr != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("record migration %s: %w", name, insErr)
+		}
+
+		if commitErr := tx.Commit(); commitErr != nil {
+			return fmt.Errorf("commit migration %s: %w", name, commitErr)
+		}
+
+		logger.Info("migration applied", zap.String("migration", name))
 	}
 
 	logger.Info("database schema created/verified successfully")
 	return nil
+}
+
+func getAppliedMigrations(db *sql.DB) (map[string]bool, error) {
+	rows, err := db.Query(`SELECT name FROM schema_migrations`)
+	if err != nil {
+		return nil, fmt.Errorf("query schema_migrations: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan schema_migrations: %w", err)
+		}
+		out[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate schema_migrations: %w", err)
+	}
+	return out, nil
+}
+
+func isIgnorableMigrationError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "duplicate column name") ||
+		strings.Contains(msg, "already exists") ||
+		errors.Is(err, sql.ErrNoRows)
 }

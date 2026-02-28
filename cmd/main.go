@@ -54,7 +54,7 @@ func main() {
 
 	repos := repository.NewRepositories(db)
 	services := service.NewServices(ctx, cfg, repos, zapLogger)
-	h := handler.New(services.App, services.JWT)
+	h := handler.New(services, cfg, zapLogger)
 
 	mux := http.NewServeMux()
 	h.Register(mux)

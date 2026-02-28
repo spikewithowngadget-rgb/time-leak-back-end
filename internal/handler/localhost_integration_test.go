@@ -23,7 +23,7 @@ func TestLocalhostServer_UserAndNotesFlow(t *testing.T) {
 	defer srv.Close()
 
 	// 1) health endpoint
-	resp := doReq(t, srv.URL, http.MethodGet, "/healthz", nil)
+	resp := doReq(t, srv.URL, http.MethodGet, "/health", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("health status: got %d want 200", resp.StatusCode)
 	}
@@ -187,6 +187,25 @@ func newLocalTestServer(t *testing.T) *httptest.Server {
 		MaxOpenConns:    5,
 		MaxIdleConns:    5,
 		ConnMaxLifetime: 2 * time.Minute,
+		JWT: config.JWTConfig{
+			AccessSecret:   "test-access-secret",
+			AdminSecret:    "test-admin-secret",
+			AccessTTL:      60 * time.Second,
+			AdminAccessTTL: 60 * time.Second,
+			RefreshTTL:     24 * time.Hour,
+			Issuer:         "test-suite",
+		},
+		OTP: config.OTPConfig{
+			HMACSecret:      "test-otp-secret",
+			RequestCooldown: 1 * time.Second,
+			MaxAttempts:     5,
+			LockDuration:    2 * time.Minute,
+			ExpiresIn:       60 * time.Second,
+		},
+		Admin: config.AdminConfig{
+			Username: "Admin",
+			Password: "QRT123",
+		},
 	}
 
 	log := zap.NewNop()
@@ -200,7 +219,7 @@ func newLocalTestServer(t *testing.T) *httptest.Server {
 
 	repos := repository.NewRepositories(db)
 	svcs := service.NewServices(context.Background(), cfg, repos, log)
-	h := New(svcs.App, svcs.JWT)
+	h := New(svcs, cfg, log)
 
 	mux := http.NewServeMux()
 	h.Register(mux)

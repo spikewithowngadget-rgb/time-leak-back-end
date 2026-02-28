@@ -1,0 +1,1 @@
+ALTER TABLE refresh_tokens ADD COLUMN role TEXT NOT NULL DEFAULT 'user';

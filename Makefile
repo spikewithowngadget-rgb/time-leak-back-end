@@ -1,7 +1,7 @@
 SHELL := /bin/zsh
 
 GO ?= go
-APP_ADDR ?= :8080
+APP_ADDR ?= :8081
 DB_PATH ?= data
 DB_NAME ?= timeleak.db
 
