@@ -1,0 +1,161 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1900" height="1200" viewBox="0 0 1900 1200">
+  <defs>
+    <style>
+      .bg { fill: #f8fafc; }
+      .title { font: 700 32px Arial, sans-serif; fill: #1f2937; }
+      .laneTitle { font: 700 18px Arial, sans-serif; fill: #111827; }
+      .txt { font: 400 14px Arial, sans-serif; fill: #1f2937; }
+      .small { font: 400 13px Arial, sans-serif; fill: #374151; }
+      .lane { fill: #ffffff; stroke: #d1d5db; stroke-width: 2; rx: 10; ry: 10; }
+      .step { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; rx: 8; ry: 8; }
+      .appStep { fill: #e0f2fe; }
+      .apiStep { fill: #ecfeff; }
+      .dbStep { fill: #f0fdf4; }
+      .adminStep { fill: #fff7ed; }
+      .devStep { fill: #fef2f2; }
+      .flow { stroke: #6b7280; stroke-width: 2.5; fill: none; }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/>
+    </marker>
+  </defs>
+
+  <rect width="1900" height="1200" class="bg"/>
+  <text x="40" y="55" class="title">TimeLeak: короткая диаграмма запросов (App / Реклама / Admin)</text>
+
+  <!-- Lanes -->
+  <rect x="40" y="90" width="360" height="1040" class="lane"/>
+  <text x="60" y="125" class="laneTitle">App (User)</text>
+
+  <rect x="440" y="90" width="500" height="1040" class="lane"/>
+  <text x="460" y="125" class="laneTitle">API Backend (/api/v1)</text>
+
+  <rect x="980" y="90" width="420" height="1040" class="lane"/>
+  <text x="1000" y="125" class="laneTitle">Service + DB</text>
+
+  <rect x="1440" y="90" width="420" height="1040" class="lane"/>
+  <text x="1460" y="125" class="laneTitle">Admin / Dev</text>
+
+  <!-- USER AUTH FLOW -->
+  <rect x="60" y="170" width="320" height="46" class="step appStep"/>
+  <text x="75" y="199" class="txt">1) Ввод телефона</text>
+
+  <rect x="460" y="170" width="460" height="46" class="step apiStep"/>
+  <text x="475" y="199" class="txt">POST /auth/otp/request {phone}</text>
+
+  <rect x="1000" y="170" width="380" height="46" class="step dbStep"/>
+  <text x="1015" y="199" class="txt">создать otp_request (hash, TTL=60s, code=4)</text>
+
+  <path d="M380 193 L460 193" class="flow" marker-end="url(#arrow)"/>
+  <path d="M920 193 L1000 193" class="flow" marker-end="url(#arrow)"/>
+
+  <rect x="60" y="250" width="320" height="46" class="step appStep"/>
+  <text x="75" y="279" class="txt">2) Ввод OTP кода</text>
+
+  <rect x="460" y="250" width="460" height="46" class="step apiStep"/>
+  <text x="475" y="279" class="txt">POST /auth/otp/verify {request_id, code}</text>
+
+  <rect x="1000" y="250" width="380" height="46" class="step dbStep"/>
+  <text x="1015" y="279" class="txt">verify OTP + user by phone + issue tokens</text>
+
+  <path d="M380 273 L460 273" class="flow" marker-end="url(#arrow)"/>
+  <path d="M920 273 L1000 273" class="flow" marker-end="url(#arrow)"/>
+
+  <rect x="60" y="330" width="320" height="46" class="step appStep"/>
+  <text x="75" y="359" class="txt">3) Храним access/refresh</text>
+
+  <rect x="460" y="330" width="460" height="46" class="step apiStep"/>
+  <text x="475" y="359" class="txt">GET /me (Bearer access_token)</text>
+
+  <path d="M380 353 L460 353" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- NOTES -->
+  <rect x="60" y="430" width="320" height="46" class="step appStep"/>
+  <text x="75" y="459" class="txt">4) Создать заметку</text>
+
+  <rect x="460" y="430" width="460" height="46" class="step apiStep"/>
+  <text x="475" y="459" class="txt">POST /auth/notes (Bearer)</text>
+
+  <rect x="1000" y="430" width="380" height="46" class="step dbStep"/>
+  <text x="1015" y="459" class="txt">insert note</text>
+
+  <path d="M380 453 L460 453" class="flow" marker-end="url(#arrow)"/>
+  <path d="M920 453 L1000 453" class="flow" marker-end="url(#arrow)"/>
+
+  <rect x="60" y="510" width="320" height="46" class="step appStep"/>
+  <text x="75" y="539" class="txt">5) Список заметок</text>
+
+  <rect x="460" y="510" width="460" height="46" class="step apiStep"/>
+  <text x="475" y="539" class="txt">GET /auth/notes (Bearer)</text>
+
+  <rect x="1000" y="510" width="380" height="46" class="step dbStep"/>
+  <text x="1015" y="539" class="txt">select notes by user_id</text>
+
+  <path d="M380 533 L460 533" class="flow" marker-end="url(#arrow)"/>
+  <path d="M920 533 L1000 533" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- ADS -->
+  <rect x="60" y="610" width="320" height="46" class="step appStep"/>
+  <text x="75" y="639" class="txt">6) Получить рекламу</text>
+
+  <rect x="460" y="610" width="460" height="46" class="step apiStep"/>
+  <text x="475" y="639" class="txt">GET /ads/next (Bearer)</text>
+
+  <rect x="1000" y="610" width="380" height="46" class="step dbStep"/>
+  <text x="1015" y="639" class="txt">next active ad + update user_ads_state</text>
+
+  <path d="M380 633 L460 633" class="flow" marker-end="url(#arrow)"/>
+  <path d="M920 633 L1000 633" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- REFRESH -->
+  <rect x="60" y="710" width="320" height="46" class="step appStep"/>
+  <text x="75" y="739" class="txt">7) Если 401 -> refresh</text>
+
+  <rect x="460" y="710" width="460" height="46" class="step refresh"/>
+  <text x="475" y="739" class="txt">POST /auth/refresh {refresh_token}</text>
+
+  <rect x="1000" y="710" width="380" height="46" class="step dbStep"/>
+  <text x="1015" y="739" class="txt">revoke old refresh + issue new pair</text>
+
+  <path d="M380 733 L460 733" class="flow" marker-end="url(#arrow)"/>
+  <path d="M920 733 L1000 733" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- ADMIN -->
+  <rect x="1460" y="170" width="380" height="46" class="step adminStep"/>
+  <text x="1475" y="199" class="txt">A1) POST /admin/auth/login</text>
+
+  <rect x="460" y="170" width="460" height="46" class="step apiStep" opacity="0.0"/>
+  <path d="M1460 193 L940 193" class="flow" marker-end="url(#arrow)"/>
+
+  <rect x="1460" y="250" width="380" height="46" class="step adminStep"/>
+  <text x="1475" y="279" class="txt">A2) GET /admin/ads (Bearer admin)</text>
+  <path d="M1460 273 L940 273" class="flow" marker-end="url(#arrow)"/>
+
+  <rect x="1460" y="330" width="380" height="46" class="step adminStep"/>
+  <text x="1475" y="359" class="txt">A3) POST /admin/ads (Bearer admin)</text>
+  <path d="M1460 353 L940 353" class="flow" marker-end="url(#arrow)"/>
+
+  <rect x="1460" y="410" width="380" height="46" class="step adminStep"/>
+  <text x="1475" y="439" class="txt">A4) PUT /admin/ads/{id} (Bearer admin)</text>
+  <path d="M1460 433 L940 433" class="flow" marker-end="url(#arrow)"/>
+
+  <rect x="1460" y="490" width="380" height="46" class="step adminStep"/>
+  <text x="1475" y="519" class="txt">A5) DELETE /admin/ads/{id} (Bearer admin)</text>
+  <path d="M1460 513 L940 513" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- DEV OTP -->
+  <rect x="1460" y="610" width="380" height="46" class="step devStep"/>
+  <text x="1475" y="639" class="txt">D1) GET /admin/testing/otp/latest?phone=...</text>
+
+  <rect x="1000" y="610" width="380" height="46" class="step dbStep" opacity="0.0"/>
+  <path d="M1460 633 L940 633" class="flow" marker-end="url(#arrow)"/>
+
+  <rect x="1460" y="670" width="380" height="72" class="step devStep"/>
+  <text x="1475" y="698" class="txt">Условие:</text>
+  <text x="1475" y="720" class="small">ENABLE_TESTING_ENDPOINTS=true</text>
+
+  <!-- QUICK LEGEND -->
+  <rect x="40" y="1060" width="1820" height="70" class="card"/>
+  <text x="60" y="1090" class="small">Коротко: User -> OTP -> Tokens -> Notes/Ads -> Refresh. Admin -> Login -> Ads CRUD. Dev -> latest OTP by phone.</text>
+  <text x="60" y="1112" class="small">Токены: access 60s, refresh rotation. OTP: WhatsApp only, 4 цифры.</text>
+</svg>
