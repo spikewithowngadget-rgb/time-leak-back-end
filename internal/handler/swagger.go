@@ -62,10 +62,10 @@ const swaggerSpec = `{
         },
         "responses": {
           "200": {
-            "description": "Authenticated user",
+            "description": "Authenticated user with tokens",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/User" }
+                "schema": { "$ref": "#/components/schemas/LoginResponse" }
               }
             }
           }
@@ -183,6 +183,20 @@ const swaggerSpec = `{
         "properties": {
           "email": { "type": "string", "format": "email" },
           "password": { "type": "string" }
+        }
+      },
+      "TokenPair": {
+        "type": "object",
+        "properties": {
+          "access_token": { "type": "string" },
+          "refresh_token": { "type": "string" }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "properties": {
+          "user": { "$ref": "#/components/schemas/User" },
+          "tokens": { "$ref": "#/components/schemas/TokenPair" }
         }
       },
       "LanguageRequest": {

@@ -70,6 +70,12 @@ type loginReq struct {
 	Password string `json:"password"`
 }
 
+// response sent when a user successfully logs in (non‑JWT and JWT combined)
+type loginResp struct {
+	User   any                 `json:"user"`   // domain.User but avoiding import cycle
+	Tokens service.TokenPair   `json:"tokens"`
+}
+
 type authRefreshReq struct {
 	RefreshToken string `json:"refresh_token"`
 }
@@ -200,7 +206,17 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, user)
+	// issue tokens for the user; this mirrors AuthLogin behaviour
+	pair, err := h.jwt.IssueTokensByEmail(user.Email)
+	if err != nil {
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, loginResp{
+		User:   user,
+		Tokens: pair,
+	})
 }
 
 func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {

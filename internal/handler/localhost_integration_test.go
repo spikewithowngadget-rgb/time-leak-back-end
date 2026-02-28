@@ -69,7 +69,7 @@ func TestLocalhostServer_UserAndNotesFlow(t *testing.T) {
 	}
 	_ = loginBad.Body.Close()
 
-	// 5) login success
+	// 5) login success (now returns tokens)
 	loginOK := doReq(t, srv.URL, http.MethodPost, "/api/v1/users/login", map[string]any{
 		"email":    "user@example.com",
 		"password": "secret-123",
@@ -77,7 +77,20 @@ func TestLocalhostServer_UserAndNotesFlow(t *testing.T) {
 	if loginOK.StatusCode != http.StatusOK {
 		t.Fatalf("good login status: got %d want 200", loginOK.StatusCode)
 	}
-	_ = loginOK.Body.Close()
+	var loginBody struct {
+		User struct {
+			UserID string `json:"userId"`
+			Email  string `json:"email"`
+		} `json:"user"`
+		Tokens struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+		} `json:"tokens"`
+	}
+	decodeJSON(t, loginOK, &loginBody)
+	if loginBody.Tokens.AccessToken == "" || loginBody.Tokens.RefreshToken == "" {
+		t.Fatal("expected access and refresh tokens")
+	}
 
 	// 6) update language
 	langResp := doReq(t, srv.URL, http.MethodPut, "/api/v1/users/"+user.UserID+"/language", map[string]any{
@@ -143,6 +156,23 @@ func TestLocalhostServer_UserAndNotesFlow(t *testing.T) {
 	decodeJSON(t, swaggerResp, &spec)
 	if spec["openapi"] == nil {
 		t.Fatal("expected openapi field in swagger spec")
+	}
+	// ensure login response schema was updated with tokens
+	paths, ok := spec["paths"].(map[string]any)
+	if !ok {
+		t.Fatal("swagger spec missing paths object")
+	}
+	if _, ok := paths["/api/v1/users/login"]; !ok {
+		t.Fatal("swagger spec missing users/login path")
+	}
+	components, ok := spec["components"].(map[string]any)
+	if ok {
+		schemas, ok := components["schemas"].(map[string]any)
+		if ok {
+			if _, ok := schemas["LoginResponse"]; !ok {
+				t.Fatal("swagger spec missing LoginResponse schema")
+			}
+		}
 	}
 }
 

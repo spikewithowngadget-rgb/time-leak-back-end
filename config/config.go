@@ -28,7 +28,7 @@ type Config struct {
 func NewConfig() (*Config, error) {
 	cfg := new(Config)
 
-	cfg.Addr = ":8080"
+	cfg.Addr = ":8081"
 	cfg.DBPath = "data"
 	cfg.DBName = "timeleak.db"
 	cfg.MaxOpenConns = 25
