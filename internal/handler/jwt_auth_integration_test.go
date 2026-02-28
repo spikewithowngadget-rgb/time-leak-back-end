@@ -192,7 +192,7 @@ func TestLocalhostServer_JWTAuth_NegativeSecurity(t *testing.T) {
 			name:       "admin latest otp without token",
 			method:     http.MethodGet,
 			path:       "/api/v1/admin/testing/otp/latest?phone=%2B77015556677",
-			wantStatus: http.StatusUnauthorized,
+			wantStatus: http.StatusNotFound,
 		},
 	}
 

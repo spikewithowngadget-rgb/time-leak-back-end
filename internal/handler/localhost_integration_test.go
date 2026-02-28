@@ -236,7 +236,7 @@ func TestLocalhostServer_CORSPreflight(t *testing.T) {
 	}
 }
 
-func TestLocalhostServer_AdminLatestOTP_RequiresAdminToken(t *testing.T) {
+func TestLocalhostServer_AdminLatestOTP_NoTokenRequired(t *testing.T) {
 	srv := newLocalTestServerWithTestingEndpoints(t, true)
 	defer srv.Close()
 
@@ -249,28 +249,10 @@ func TestLocalhostServer_AdminLatestOTP_RequiresAdminToken(t *testing.T) {
 	_ = otpReqResp.Body.Close()
 
 	withoutToken := doReq(t, srv.URL, http.MethodGet, "/api/v1/admin/testing/otp/latest?phone=%2B77012223344", nil)
-	if withoutToken.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("without token status: got %d want 401", withoutToken.StatusCode)
+	if withoutToken.StatusCode != http.StatusOK {
+		t.Fatalf("without token status: got %d want 200", withoutToken.StatusCode)
 	}
 	_ = withoutToken.Body.Close()
-
-	adminLogin := doReq(t, srv.URL, http.MethodPost, "/api/v1/admin/auth/login", map[string]any{
-		"username": "Admin",
-		"password": "QRT123",
-	})
-	if adminLogin.StatusCode != http.StatusOK {
-		t.Fatalf("admin login status: got %d want 200", adminLogin.StatusCode)
-	}
-	var adminBody struct {
-		AccessToken string `json:"access_token"`
-	}
-	decodeJSON(t, adminLogin, &adminBody)
-
-	withToken := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/admin/testing/otp/latest?phone=%2B77012223344", nil, adminBody.AccessToken)
-	if withToken.StatusCode != http.StatusOK {
-		t.Fatalf("with token status: got %d want 200", withToken.StatusCode)
-	}
-	_ = withToken.Body.Close()
 }
 
 func TestLocalhostServer_SwaggerSpec_PhoneOnlyAuth(t *testing.T) {
@@ -309,8 +291,8 @@ func TestLocalhostServer_SwaggerSpec_PhoneOnlyAuth(t *testing.T) {
 	if !ok {
 		t.Fatal("swagger missing GET for admin testing otp path")
 	}
-	if _, hasSecurity := otpLatestGet["security"]; !hasSecurity {
-		t.Fatal("expected security requirement for /api/v1/admin/testing/otp/latest")
+	if _, hasSecurity := otpLatestGet["security"]; hasSecurity {
+		t.Fatal("expected no security requirement for /api/v1/admin/testing/otp/latest")
 	}
 
 	components, ok := spec["components"].(map[string]any)

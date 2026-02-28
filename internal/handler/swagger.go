@@ -385,8 +385,7 @@ const swaggerSpec = `{
     "/api/v1/admin/testing/otp/latest": {
       "get": {
         "summary": "Get latest OTP code (DEV ONLY)",
-        "description": "DEV ONLY: returns OTP code in plain text for testing. Requires admin JWT and ENABLE_TESTING_ENDPOINTS=true.",
-        "security": [{ "BearerAuth": [] }],
+        "description": "DEV ONLY: returns OTP code in plain text for testing. Requires ENABLE_TESTING_ENDPOINTS=true.",
         "parameters": [
           { "name": "phone", "in": "query", "required": true, "schema": { "type": "string", "example": "+77015556677" } }
         ],
@@ -399,7 +398,6 @@ const swaggerSpec = `{
               }
             }
           },
-          "401": { "description": "Unauthorized" },
           "404": { "description": "Disabled or code not found" }
         }
       }

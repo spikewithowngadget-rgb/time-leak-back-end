@@ -69,7 +69,6 @@ Swagger is static in `internal/handler/swagger.go`; regenerate by editing that f
 - Endpoint: `GET /api/v1/admin/testing/otp/latest`
 - Requires:
   - `ENABLE_TESTING_ENDPOINTS=true`
-  - Admin JWT in `Authorization: Bearer <token>`
 - Query: provide `phone`
 
 ## Tests

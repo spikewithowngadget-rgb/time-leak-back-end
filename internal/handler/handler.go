@@ -554,9 +554,6 @@ func (h *Handler) AdminListAds(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) AdminLatestOTP(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.adminClaimsFromRequest(w, r); !ok {
-		return
-	}
 	if !h.cfg.EnableTestingEndpoints {
 		writeErrorJSON(w, http.StatusNotFound, "not found")
 		return
