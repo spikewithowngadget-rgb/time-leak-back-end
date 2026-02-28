@@ -1,6 +1,6 @@
 # Time Leak Backend
 
-Go backend with SQLite, JWT auth, OTP auth (WhatsApp/email simulation), notes, and ads rotation.
+Go backend with SQLite, JWT auth, phone-only WhatsApp OTP auth (development stub), notes, and ads rotation.
 
 ## Features
 
@@ -8,10 +8,10 @@ Go backend with SQLite, JWT auth, OTP auth (WhatsApp/email simulation), notes, a
 - Existing user/profile/notes endpoints preserved
 - Access token TTL is exactly `60s`
 - Refresh token rotation with revocation
-- OTP auth:
+- OTP auth (phone-only WhatsApp):
   - `POST /api/v1/auth/otp/request`
   - `POST /api/v1/auth/otp/verify`
-  - OTP stored hashed (HMAC-SHA256), TTL `60s`
+  - OTP stored hashed (HMAC-SHA256), 4-digit code, TTL `60s`
   - rate limit + attempts lockout
 - Admin auth:
   - `POST /api/v1/admin/auth/login`
@@ -67,8 +67,10 @@ Swagger is static in `internal/handler/swagger.go`; regenerate by editing that f
 ### OTP Testing Endpoint (DEV ONLY)
 
 - Endpoint: `GET /api/v1/admin/testing/otp/latest`
-- Requires: `ENABLE_TESTING_ENDPOINTS=true`
-- Query: provide `phone` or `email` (if both are passed, `phone` is checked first, then `email`)
+- Requires:
+  - `ENABLE_TESTING_ENDPOINTS=true`
+  - Admin JWT in `Authorization: Bearer <token>`
+- Query: provide `phone`
 
 ## Tests
 

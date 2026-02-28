@@ -12,8 +12,8 @@ WorkingDirectory=/home/time-leak-back-end
 Environment="APP_ADDR=:8080"
 Environment="DB_PATH=/home/time-leak-back-end/data"
 Environment="DB_NAME=timeleak.db"
-# DEV ONLY: keep this true only on development/staging.
-Environment="ENABLE_TESTING_ENDPOINTS=true"
+# DEV ONLY: set true only on development/staging.
+Environment="ENABLE_TESTING_ENDPOINTS=false"
 Environment="PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # Run using go run

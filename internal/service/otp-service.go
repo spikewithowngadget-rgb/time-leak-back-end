@@ -11,7 +11,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/mail"
 	"strings"
 	"sync"
 	"time"
@@ -307,8 +306,6 @@ func normalizeOTPChannel(channel domain.OTPChannel) domain.OTPChannel {
 	switch strings.ToLower(strings.TrimSpace(string(channel))) {
 	case string(domain.OTPChannelWhatsApp):
 		return domain.OTPChannelWhatsApp
-	case string(domain.OTPChannelEmail):
-		return domain.OTPChannelEmail
 	default:
 		return domain.OTPChannel("")
 	}
@@ -316,8 +313,6 @@ func normalizeOTPChannel(channel domain.OTPChannel) domain.OTPChannel {
 
 func normalizeOTPDestination(channel domain.OTPChannel, destination string) string {
 	switch channel {
-	case domain.OTPChannelEmail:
-		return normalizeEmail(destination)
 	case domain.OTPChannelWhatsApp:
 		return normalizePhone(destination)
 	default:
@@ -330,11 +325,6 @@ func validateOTPDestination(channel domain.OTPChannel, destination string) error
 		return ErrInvalidOTPDestination
 	}
 	switch channel {
-	case domain.OTPChannelEmail:
-		if _, err := mail.ParseAddress(destination); err != nil {
-			return ErrInvalidOTPDestination
-		}
-		return nil
 	case domain.OTPChannelWhatsApp:
 		digits := strings.TrimPrefix(destination, "+")
 		if len(digits) < 6 {
@@ -352,7 +342,7 @@ func validateOTPDestination(channel domain.OTPChannel, destination string) error
 }
 
 func isValidOTPCode(code string) bool {
-	if len(code) != 6 {
+	if len(code) != 4 {
 		return false
 	}
 	for _, r := range code {
@@ -368,8 +358,8 @@ func generateNumericOTPCode() (string, error) {
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", fmt.Errorf("otp random generation failed: %w", err)
 	}
-	n := binary.BigEndian.Uint32(b[:]) % 1000000
-	return fmt.Sprintf("%06d", n), nil
+	n := binary.BigEndian.Uint32(b[:]) % 10000
+	return fmt.Sprintf("%04d", n), nil
 }
 
 func constantTimeStringEqual(a, b string) bool {

@@ -300,13 +300,17 @@ func (r *Repository) Save(ctx context.Context, token string, rec domain.RefreshR
 	if token == "" {
 		return errors.New("refresh token is empty")
 	}
+	phone := normalizePhone(rec.Phone)
+	if phone == "" {
+		return errors.New("refresh phone is empty")
+	}
 
 	_, err := r.db.ExecContext(
 		ctx,
 		`INSERT INTO refresh_tokens (token, user_id, email, auth_type, role, expires_at, revoked) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		token,
 		rec.UserUUID,
-		normalizeEmail(rec.Email),
+		phone,
 		strings.TrimSpace(rec.AuthType),
 		strings.TrimSpace(rec.Role),
 		rec.ExpiresAt.UTC().Format(time.RFC3339Nano),
@@ -326,7 +330,7 @@ func (r *Repository) Get(ctx context.Context, token string) (domain.RefreshRecor
 
 	row := r.db.QueryRowContext(
 		ctx,
-		`SELECT user_id, email, COALESCE(auth_type, 'password'), COALESCE(role, 'user'), expires_at, revoked FROM refresh_tokens WHERE token = ?`,
+		`SELECT user_id, email, COALESCE(auth_type, 'otp_whatsapp'), COALESCE(role, 'user'), expires_at, revoked FROM refresh_tokens WHERE token = ?`,
 		token,
 	)
 
@@ -335,9 +339,10 @@ func (r *Repository) Get(ctx context.Context, token string) (domain.RefreshRecor
 		expiresAt string
 		revoked   int
 	)
-	if err := row.Scan(&rec.UserUUID, &rec.Email, &rec.AuthType, &rec.Role, &expiresAt, &revoked); err != nil {
+	if err := row.Scan(&rec.UserUUID, &rec.Phone, &rec.AuthType, &rec.Role, &expiresAt, &revoked); err != nil {
 		return domain.RefreshRecord{}, err
 	}
+	rec.Phone = normalizePhone(rec.Phone)
 
 	rec.ExpiresAt = parseSQLiteTime(expiresAt)
 	rec.Revoked = revoked != 0
@@ -778,8 +783,6 @@ func normalizePhone(phone string) string {
 
 func normalizeDestination(channel domain.OTPChannel, destination string) string {
 	switch channel {
-	case domain.OTPChannelEmail:
-		return normalizeEmail(destination)
 	case domain.OTPChannelWhatsApp:
 		return normalizePhone(destination)
 	default:

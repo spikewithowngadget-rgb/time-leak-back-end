@@ -19,180 +19,188 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestLocalhostServer_UserAndNotesFlow(t *testing.T) {
-	srv := newLocalTestServer(t)
+func TestLocalhostServer_PhoneOTPAndNotesFlow(t *testing.T) {
+	srv := newLocalTestServerWithTestingEndpoints(t, true)
 	defer srv.Close()
 
-	// 1) health endpoint
 	resp := doReq(t, srv.URL, http.MethodGet, "/health", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("health status: got %d want 200", resp.StatusCode)
 	}
 	_ = resp.Body.Close()
 
-	// 2) register success
-	regResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/users/register", map[string]any{
-		"email":        "user@example.com",
-		"password":     "secret-123",
-		"userLanguage": "ru",
+	phone := "+77015556677"
+	otpReqResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/otp/request", map[string]any{
+		"phone": phone,
 	})
-	if regResp.StatusCode != http.StatusCreated {
-		t.Fatalf("register status: got %d want 201", regResp.StatusCode)
+	if otpReqResp.StatusCode != http.StatusOK {
+		t.Fatalf("otp request status: got %d want 200", otpReqResp.StatusCode)
 	}
-	var user struct {
-		UserID       string `json:"userId"`
-		Email        string `json:"email"`
-		UserLanguage string `json:"userLanguage"`
+	var otpReqBody struct {
+		RequestID string `json:"request_id"`
 	}
-	decodeJSON(t, regResp, &user)
-	if user.UserID == "" {
-		t.Fatal("expected userId")
+	decodeJSON(t, otpReqResp, &otpReqBody)
+	if otpReqBody.RequestID == "" {
+		t.Fatal("expected request_id")
 	}
 
-	// 3) duplicate register (negative)
-	dupResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/users/register", map[string]any{
-		"email":        "user@example.com",
-		"password":     "secret-123",
-		"userLanguage": "ru",
+	adminLogin := doReq(t, srv.URL, http.MethodPost, "/api/v1/admin/auth/login", map[string]any{
+		"username": "Admin",
+		"password": "QRT123",
 	})
-	if dupResp.StatusCode != http.StatusConflict {
-		t.Fatalf("duplicate register status: got %d want 409", dupResp.StatusCode)
+	if adminLogin.StatusCode != http.StatusOK {
+		t.Fatalf("admin login status: got %d want 200", adminLogin.StatusCode)
 	}
-	_ = dupResp.Body.Close()
+	var adminBody struct {
+		AccessToken string `json:"access_token"`
+	}
+	decodeJSON(t, adminLogin, &adminBody)
+	if adminBody.AccessToken == "" {
+		t.Fatal("expected admin access token")
+	}
 
-	// 4) login wrong password (negative)
-	loginBad := doReq(t, srv.URL, http.MethodPost, "/api/v1/users/login", map[string]any{
-		"email":    "user@example.com",
-		"password": "wrong",
-	})
-	if loginBad.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("bad login status: got %d want 401", loginBad.StatusCode)
+	otpCodeResp := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/admin/testing/otp/latest?phone=%2B77015556677", nil, adminBody.AccessToken)
+	if otpCodeResp.StatusCode != http.StatusOK {
+		t.Fatalf("latest otp status: got %d want 200", otpCodeResp.StatusCode)
 	}
-	_ = loginBad.Body.Close()
+	codeRaw, err := io.ReadAll(otpCodeResp.Body)
+	if err != nil {
+		t.Fatalf("read otp code: %v", err)
+	}
+	_ = otpCodeResp.Body.Close()
+	otpCode := strings.TrimSpace(string(codeRaw))
+	if len(otpCode) != 4 {
+		t.Fatalf("expected 4-digit otp code, got %q", otpCode)
+	}
 
-	// 5) login success (now returns tokens)
-	loginOK := doReq(t, srv.URL, http.MethodPost, "/api/v1/users/login", map[string]any{
-		"email":    "user@example.com",
-		"password": "secret-123",
+	verifyResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/otp/verify", map[string]any{
+		"request_id": otpReqBody.RequestID,
+		"code":       otpCode,
 	})
-	if loginOK.StatusCode != http.StatusOK {
-		t.Fatalf("good login status: got %d want 200", loginOK.StatusCode)
+	if verifyResp.StatusCode != http.StatusOK {
+		t.Fatalf("otp verify status: got %d want 200", verifyResp.StatusCode)
 	}
-	var loginBody struct {
-		User struct {
+	var verifyBody struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		User         struct {
 			UserID string `json:"userId"`
-			Email  string `json:"email"`
+			Phone  string `json:"phone"`
 		} `json:"user"`
-		Tokens struct {
-			AccessToken  string `json:"access_token"`
-			RefreshToken string `json:"refresh_token"`
-		} `json:"tokens"`
 	}
-	decodeJSON(t, loginOK, &loginBody)
-	if loginBody.Tokens.AccessToken == "" || loginBody.Tokens.RefreshToken == "" {
+	decodeJSON(t, verifyResp, &verifyBody)
+	if verifyBody.AccessToken == "" || verifyBody.RefreshToken == "" {
 		t.Fatal("expected access and refresh tokens")
 	}
-
-	// 6) update language
-	langResp := doReq(t, srv.URL, http.MethodPut, "/api/v1/users/"+user.UserID+"/language", map[string]any{
-		"userLanguage": "kk",
-	})
-	if langResp.StatusCode != http.StatusOK {
-		t.Fatalf("language update status: got %d want 200", langResp.StatusCode)
+	if verifyBody.User.UserID == "" {
+		t.Fatal("expected user id")
 	}
-	_ = langResp.Body.Close()
-
-	// 7) get user and verify language
-	getUser := doReq(t, srv.URL, http.MethodGet, "/api/v1/users/"+user.UserID, nil)
-	if getUser.StatusCode != http.StatusOK {
-		t.Fatalf("get user status: got %d want 200", getUser.StatusCode)
-	}
-	var userAfter struct {
-		UserLanguage string `json:"userLanguage"`
-	}
-	decodeJSON(t, getUser, &userAfter)
-	if userAfter.UserLanguage != "kk" {
-		t.Fatalf("expected userLanguage=kk, got %q", userAfter.UserLanguage)
+	if verifyBody.User.Phone != phone {
+		t.Fatalf("expected phone %q got %q", phone, verifyBody.User.Phone)
 	}
 
-	// 8) create note success
-	noteResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/notes", map[string]any{
-		"userId":    user.UserID,
+	meClaims := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/me", nil, verifyBody.AccessToken)
+	if meClaims.StatusCode != http.StatusOK {
+		t.Fatalf("auth/me status: got %d want 200", meClaims.StatusCode)
+	}
+	var meClaimsBody struct {
+		UserUUID string `json:"user_uuid"`
+		Phone    string `json:"phone"`
+	}
+	decodeJSON(t, meClaims, &meClaimsBody)
+	if meClaimsBody.UserUUID != verifyBody.User.UserID {
+		t.Fatalf("expected user_uuid %q got %q", verifyBody.User.UserID, meClaimsBody.UserUUID)
+	}
+	if meClaimsBody.Phone != phone {
+		t.Fatalf("expected phone %q got %q", phone, meClaimsBody.Phone)
+	}
+
+	authNoteCreate := doReqAuth(t, srv.URL, http.MethodPost, "/api/v1/auth/notes", map[string]any{
 		"note_type": "deadline",
-	})
-	if noteResp.StatusCode != http.StatusCreated {
-		t.Fatalf("create note status: got %d want 201", noteResp.StatusCode)
+	}, verifyBody.AccessToken)
+	if authNoteCreate.StatusCode != http.StatusCreated {
+		t.Fatalf("auth note create status: got %d want 201", authNoteCreate.StatusCode)
 	}
-	_ = noteResp.Body.Close()
+	_ = authNoteCreate.Body.Close()
 
-	// 9) create note for missing user (negative)
-	noteMissingUser := doReq(t, srv.URL, http.MethodPost, "/api/v1/notes", map[string]any{
-		"userId":    "11111111-1111-1111-1111-111111111111",
-		"note_type": "deadline",
-	})
-	if noteMissingUser.StatusCode != http.StatusNotFound {
-		t.Fatalf("missing-user note status: got %d want 404", noteMissingUser.StatusCode)
+	authNoteList := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/notes", nil, verifyBody.AccessToken)
+	if authNoteList.StatusCode != http.StatusOK {
+		t.Fatalf("auth note list status: got %d want 200", authNoteList.StatusCode)
 	}
-	_ = noteMissingUser.Body.Close()
-
-	// 10) list notes
-	listResp := doReq(t, srv.URL, http.MethodGet, "/api/v1/users/"+user.UserID+"/notes", nil)
-	if listResp.StatusCode != http.StatusOK {
-		t.Fatalf("list notes status: got %d want 200", listResp.StatusCode)
-	}
-	var notesBody struct {
+	var authList struct {
 		Total int `json:"total"`
 	}
-	decodeJSON(t, listResp, &notesBody)
-	if notesBody.Total < 1 {
-		t.Fatalf("expected at least 1 note, got %d", notesBody.Total)
+	decodeJSON(t, authNoteList, &authList)
+	if authList.Total < 1 {
+		t.Fatalf("expected at least 1 note, got %d", authList.Total)
 	}
 
-	// extra: swagger spec available
-	swaggerResp := doReq(t, srv.URL, http.MethodGet, "/swagger.json", nil)
-	if swaggerResp.StatusCode != http.StatusOK {
-		t.Fatalf("swagger status: got %d want 200", swaggerResp.StatusCode)
+	refreshResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/refresh", map[string]any{
+		"refresh_token": verifyBody.RefreshToken,
+	})
+	if refreshResp.StatusCode != http.StatusOK {
+		t.Fatalf("refresh status: got %d want 200", refreshResp.StatusCode)
 	}
-	var spec map[string]any
-	decodeJSON(t, swaggerResp, &spec)
-	if spec["openapi"] == nil {
-		t.Fatal("expected openapi field in swagger spec")
+	var refreshBody struct {
+		AccessToken string `json:"access_token"`
 	}
-	// ensure login response schema was updated with tokens
-	paths, ok := spec["paths"].(map[string]any)
-	if !ok {
-		t.Fatal("swagger spec missing paths object")
-	}
-	if _, ok := paths["/api/v1/users/login"]; !ok {
-		t.Fatal("swagger spec missing users/login path")
-	}
-	if otpLatestPath, ok := paths["/api/v1/admin/testing/otp/latest"].(map[string]any); ok {
-		if otpLatestGet, ok := otpLatestPath["get"].(map[string]any); ok {
-			if _, hasSecurity := otpLatestGet["security"]; hasSecurity {
-				t.Fatal("expected no security requirement for /api/v1/admin/testing/otp/latest")
-			}
-		}
-	}
-	components, ok := spec["components"].(map[string]any)
-	if ok {
-		schemas, ok := components["schemas"].(map[string]any)
-		if ok {
-			if _, ok := schemas["LoginResponse"]; !ok {
-				t.Fatal("swagger spec missing LoginResponse schema")
-			}
-		}
+	decodeJSON(t, refreshResp, &refreshBody)
+	if refreshBody.AccessToken == "" {
+		t.Fatal("expected refreshed access token")
 	}
 
-	servers, ok := spec["servers"].([]any)
-	if !ok || len(servers) == 0 {
-		t.Fatal("swagger spec missing servers")
+	meProfile := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/me", nil, refreshBody.AccessToken)
+	if meProfile.StatusCode != http.StatusOK {
+		t.Fatalf("/me status: got %d want 200", meProfile.StatusCode)
 	}
-	firstServer, ok := servers[0].(map[string]any)
-	if !ok {
-		t.Fatal("swagger spec first server has invalid shape")
+	var meProfileBody struct {
+		UserID       string `json:"userId"`
+		UserLanguage string `json:"userLanguage"`
 	}
-	if serverURL, _ := firstServer["url"].(string); serverURL != "/" {
-		t.Fatalf("expected swagger server url '/', got %q", serverURL)
+	decodeJSON(t, meProfile, &meProfileBody)
+	if meProfileBody.UserID != verifyBody.User.UserID {
+		t.Fatalf("expected profile user id %q got %q", verifyBody.User.UserID, meProfileBody.UserID)
+	}
+
+	updateLang := doReq(t, srv.URL, http.MethodPut, "/api/v1/users/"+verifyBody.User.UserID+"/language", map[string]any{
+		"userLanguage": "kk",
+	})
+	if updateLang.StatusCode != http.StatusOK {
+		t.Fatalf("update language status: got %d want 200", updateLang.StatusCode)
+	}
+	_ = updateLang.Body.Close()
+
+	userByID := doReq(t, srv.URL, http.MethodGet, "/api/v1/users/"+verifyBody.User.UserID, nil)
+	if userByID.StatusCode != http.StatusOK {
+		t.Fatalf("get user status: got %d want 200", userByID.StatusCode)
+	}
+	var userByIDBody struct {
+		UserLanguage string `json:"userLanguage"`
+	}
+	decodeJSON(t, userByID, &userByIDBody)
+	if userByIDBody.UserLanguage != "kk" {
+		t.Fatalf("expected userLanguage=kk got %q", userByIDBody.UserLanguage)
+	}
+
+	legacyCreate := doReq(t, srv.URL, http.MethodPost, "/api/v1/notes", map[string]any{
+		"userId":    verifyBody.User.UserID,
+		"note_type": "reminder",
+	})
+	if legacyCreate.StatusCode != http.StatusCreated {
+		t.Fatalf("legacy note create status: got %d want 201", legacyCreate.StatusCode)
+	}
+	_ = legacyCreate.Body.Close()
+
+	legacyList := doReq(t, srv.URL, http.MethodGet, "/api/v1/users/"+verifyBody.User.UserID+"/notes", nil)
+	if legacyList.StatusCode != http.StatusOK {
+		t.Fatalf("legacy note list status: got %d want 200", legacyList.StatusCode)
+	}
+	var legacyListBody struct {
+		Total int `json:"total"`
+	}
+	decodeJSON(t, legacyList, &legacyListBody)
+	if legacyListBody.Total < 2 {
+		t.Fatalf("expected at least 2 total notes, got %d", legacyListBody.Total)
 	}
 }
 
@@ -200,7 +208,7 @@ func TestLocalhostServer_CORSPreflight(t *testing.T) {
 	srv := newLocalTestServer(t)
 	defer srv.Close()
 
-	req, err := http.NewRequest(http.MethodOptions, srv.URL+"/api/v1/users/login", nil)
+	req, err := http.NewRequest(http.MethodOptions, srv.URL+"/api/v1/auth/otp/request", nil)
 	if err != nil {
 		t.Fatalf("new request error: %v", err)
 	}
@@ -228,83 +236,110 @@ func TestLocalhostServer_CORSPreflight(t *testing.T) {
 	}
 }
 
-func TestLocalhostServer_AdminLatestOTP_NoAuthTokenRequired(t *testing.T) {
+func TestLocalhostServer_AdminLatestOTP_RequiresAdminToken(t *testing.T) {
 	srv := newLocalTestServerWithTestingEndpoints(t, true)
 	defer srv.Close()
 
 	otpReqResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/otp/request", map[string]any{
-		"channel": "email",
-		"email":   "otp-user@example.com",
+		"phone": "+77012223344",
 	})
 	if otpReqResp.StatusCode != http.StatusOK {
 		t.Fatalf("otp request status: got %d want 200", otpReqResp.StatusCode)
 	}
 	_ = otpReqResp.Body.Close()
 
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/admin/testing/otp/latest?email=otp-user@example.com", nil)
-	if err != nil {
-		t.Fatalf("new request error: %v", err)
+	withoutToken := doReq(t, srv.URL, http.MethodGet, "/api/v1/admin/testing/otp/latest?phone=%2B77012223344", nil)
+	if withoutToken.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("without token status: got %d want 401", withoutToken.StatusCode)
 	}
+	_ = withoutToken.Body.Close()
 
-	resp, err := (&http.Client{}).Do(req)
-	if err != nil {
-		t.Fatalf("http request error: %v", err)
+	adminLogin := doReq(t, srv.URL, http.MethodPost, "/api/v1/admin/auth/login", map[string]any{
+		"username": "Admin",
+		"password": "QRT123",
+	})
+	if adminLogin.StatusCode != http.StatusOK {
+		t.Fatalf("admin login status: got %d want 200", adminLogin.StatusCode)
 	}
-	defer resp.Body.Close()
+	var adminBody struct {
+		AccessToken string `json:"access_token"`
+	}
+	decodeJSON(t, adminLogin, &adminBody)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("latest otp status: got %d want 200", resp.StatusCode)
+	withToken := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/admin/testing/otp/latest?phone=%2B77012223344", nil, adminBody.AccessToken)
+	if withToken.StatusCode != http.StatusOK {
+		t.Fatalf("with token status: got %d want 200", withToken.StatusCode)
 	}
-
-	codeBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read body error: %v", err)
-	}
-	code := strings.TrimSpace(string(codeBytes))
-	if len(code) != 6 {
-		t.Fatalf("expected 6-digit otp code, got %q", code)
-	}
+	_ = withToken.Body.Close()
 }
 
-func TestLocalhostServer_AdminLatestOTP_BothQueryParamsFallbackToEmail(t *testing.T) {
-	srv := newLocalTestServerWithTestingEndpoints(t, true)
+func TestLocalhostServer_SwaggerSpec_PhoneOnlyAuth(t *testing.T) {
+	srv := newLocalTestServer(t)
 	defer srv.Close()
 
-	otpReqResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/otp/request", map[string]any{
-		"channel": "email",
-		"email":   "otp-fallback@example.com",
-	})
-	if otpReqResp.StatusCode != http.StatusOK {
-		t.Fatalf("otp request status: got %d want 200", otpReqResp.StatusCode)
+	swaggerResp := doReq(t, srv.URL, http.MethodGet, "/swagger.json", nil)
+	if swaggerResp.StatusCode != http.StatusOK {
+		t.Fatalf("swagger status: got %d want 200", swaggerResp.StatusCode)
 	}
-	_ = otpReqResp.Body.Close()
+	var spec map[string]any
+	decodeJSON(t, swaggerResp, &spec)
 
-	req, err := http.NewRequest(
-		http.MethodGet,
-		srv.URL+"/api/v1/admin/testing/otp/latest?phone=%2B77015556677&email=otp-fallback@example.com",
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("new request error: %v", err)
+	paths, ok := spec["paths"].(map[string]any)
+	if !ok {
+		t.Fatal("swagger spec missing paths")
 	}
-
-	resp, err := (&http.Client{}).Do(req)
-	if err != nil {
-		t.Fatalf("http request error: %v", err)
+	if _, ok := paths["/api/v1/auth/otp/request"]; !ok {
+		t.Fatal("swagger spec missing /api/v1/auth/otp/request")
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("latest otp status: got %d want 200", resp.StatusCode)
+	if _, ok := paths["/api/v1/auth/login"]; ok {
+		t.Fatal("swagger must not expose /api/v1/auth/login")
+	}
+	if _, ok := paths["/api/v1/users/login"]; ok {
+		t.Fatal("swagger must not expose /api/v1/users/login")
+	}
+	if _, ok := paths["/api/v1/users/register"]; ok {
+		t.Fatal("swagger must not expose /api/v1/users/register")
 	}
 
-	codeBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read body error: %v", err)
+	otpLatestPath, ok := paths["/api/v1/admin/testing/otp/latest"].(map[string]any)
+	if !ok {
+		t.Fatal("swagger missing admin testing otp path")
 	}
-	code := strings.TrimSpace(string(codeBytes))
-	if len(code) != 6 {
-		t.Fatalf("expected 6-digit otp code, got %q", code)
+	otpLatestGet, ok := otpLatestPath["get"].(map[string]any)
+	if !ok {
+		t.Fatal("swagger missing GET for admin testing otp path")
+	}
+	if _, hasSecurity := otpLatestGet["security"]; !hasSecurity {
+		t.Fatal("expected security requirement for /api/v1/admin/testing/otp/latest")
+	}
+
+	components, ok := spec["components"].(map[string]any)
+	if !ok {
+		t.Fatal("swagger missing components")
+	}
+	schemas, ok := components["schemas"].(map[string]any)
+	if !ok {
+		t.Fatal("swagger missing components.schemas")
+	}
+	otpReqInput, ok := schemas["OTPRequestInput"].(map[string]any)
+	if !ok {
+		t.Fatal("swagger missing OTPRequestInput schema")
+	}
+	required, ok := otpReqInput["required"].([]any)
+	if !ok || len(required) != 1 || required[0] != "phone" {
+		t.Fatal("OTPRequestInput.required must be [phone]")
+	}
+
+	servers, ok := spec["servers"].([]any)
+	if !ok || len(servers) == 0 {
+		t.Fatal("swagger spec missing servers")
+	}
+	firstServer, ok := servers[0].(map[string]any)
+	if !ok {
+		t.Fatal("swagger spec first server has invalid shape")
+	}
+	if serverURL, _ := firstServer["url"].(string); serverURL != "/" {
+		t.Fatalf("expected swagger server url '/', got %q", serverURL)
 	}
 }
 
@@ -381,6 +416,35 @@ func doReq(t *testing.T, baseURL, method, path string, body any) *http.Response 
 		t.Fatalf("new request error: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("http request error: %v", err)
+	}
+	return resp
+}
+
+func doReqAuth(t *testing.T, baseURL, method, path string, body any, token string) *http.Response {
+	t.Helper()
+
+	var payload []byte
+	if body != nil {
+		var err error
+		payload, err = json.Marshal(body)
+		if err != nil {
+			t.Fatalf("json marshal error: %v", err)
+		}
+	}
+
+	req, err := http.NewRequest(method, baseURL+path, bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("new request error: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	client := &http.Client{}
 	resp, err := client.Do(req)

@@ -4,7 +4,7 @@ import "time"
 
 type RefreshRecord struct {
 	UserUUID  string
-	Email     string
+	Phone     string
 	AuthType  string
 	Role      string
 	ExpiresAt time.Time
@@ -36,7 +36,6 @@ type OTPChannel string
 
 const (
 	OTPChannelWhatsApp OTPChannel = "whatsapp"
-	OTPChannelEmail    OTPChannel = "email"
 )
 
 type OTPRequest struct {

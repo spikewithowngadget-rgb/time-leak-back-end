@@ -37,7 +37,7 @@ type AdminToken struct {
 
 type AccessClaims struct {
 	UserUUID string `json:"uid,omitempty"`
-	Email    string `json:"email,omitempty"`
+	Phone    string `json:"phone,omitempty"`
 	Role     string `json:"role"`
 	AuthType string `json:"auth_type"`
 	jwt.RegisteredClaims
@@ -49,10 +49,6 @@ type RefreshStore interface {
 	Revoke(ctx context.Context, token string) error
 }
 
-type UserRepo interface {
-	GetOrCreateUUIDByEmail(ctx context.Context, email string) (string, error)
-}
-
 type AuthService struct {
 	issuer       string
 	accessSecret []byte
@@ -61,11 +57,10 @@ type AuthService struct {
 	adminTTL     time.Duration
 	refreshTTL   time.Duration
 	store        RefreshStore
-	users        UserRepo
 	log          *zap.Logger
 }
 
-func NewAuthService(jwtCfg config.JWTConfig, store RefreshStore, users UserRepo, log *zap.Logger) *AuthService {
+func NewAuthService(jwtCfg config.JWTConfig, store RefreshStore, log *zap.Logger) *AuthService {
 	if log == nil {
 		log = zap.NewNop()
 	}
@@ -106,7 +101,6 @@ func NewAuthService(jwtCfg config.JWTConfig, store RefreshStore, users UserRepo,
 		adminTTL:     adminTTL,
 		refreshTTL:   refreshTTL,
 		store:        store,
-		users:        users,
 		log:          log,
 	}
 }
@@ -119,32 +113,19 @@ func (s *AuthService) AdminTTLSeconds() int {
 	return int(s.adminTTL.Seconds())
 }
 
-func (s *AuthService) IssueTokensByEmail(ctx context.Context, email string) (TokenPair, error) {
-	email = normalizeEmail(email)
-	if email == "" {
-		return TokenPair{}, errors.New("email is empty")
-	}
-
-	userUUID, err := s.users.GetOrCreateUUIDByEmail(ctx, email)
-	if err != nil {
-		return TokenPair{}, err
-	}
-	return s.issueTokens(ctx, userUUID, email, "password", "user")
-}
-
 func (s *AuthService) IssueUserTokens(ctx context.Context, user domain.User, authType string) (TokenPair, error) {
 	if strings.TrimSpace(user.UserID) == "" {
 		return TokenPair{}, errors.New("user id is empty")
 	}
-	email := normalizeEmail(user.Email)
-	if email == "" {
-		return TokenPair{}, errors.New("user email is empty")
+	phone := normalizePhone(user.Phone)
+	if phone == "" {
+		return TokenPair{}, errors.New("user phone is empty")
 	}
 	authType = strings.TrimSpace(authType)
 	if authType == "" {
-		authType = "password"
+		authType = "otp_whatsapp"
 	}
-	return s.issueTokens(ctx, user.UserID, email, authType, "user")
+	return s.issueTokens(ctx, user.UserID, phone, authType, "user")
 }
 
 func (s *AuthService) IssueAdminToken(username string) (AdminToken, error) {
@@ -176,14 +157,18 @@ func (s *AuthService) IssueAdminToken(username string) (AdminToken, error) {
 func (s *AuthService) issueTokens(
 	ctx context.Context,
 	userUUID string,
-	email string,
+	phone string,
 	authType string,
 	role string,
 ) (TokenPair, error) {
 	now := time.Now().UTC()
+	phone = normalizePhone(phone)
+	if phone == "" {
+		return TokenPair{}, errors.New("phone is empty")
+	}
 	authType = strings.TrimSpace(authType)
 	if authType == "" {
-		authType = "password"
+		authType = "otp_whatsapp"
 	}
 	role = strings.TrimSpace(role)
 	if role == "" {
@@ -192,12 +177,12 @@ func (s *AuthService) issueTokens(
 
 	claims := AccessClaims{
 		UserUUID: userUUID,
-		Email:    email,
+		Phone:    phone,
 		Role:     role,
 		AuthType: authType,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    s.issuer,
-			Subject:   email,
+			Subject:   phone,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(s.accessTTL)),
 		},
@@ -215,7 +200,7 @@ func (s *AuthService) issueTokens(
 
 	if err := s.store.Save(ctx, refresh, domain.RefreshRecord{
 		UserUUID:  userUUID,
-		Email:     email,
+		Phone:     phone,
 		AuthType:  authType,
 		Role:      role,
 		ExpiresAt: now.Add(s.refreshTTL),
@@ -317,13 +302,13 @@ func (s *AuthService) Refresh(ctx context.Context, oldRefresh string) (TokenPair
 	}
 
 	if strings.TrimSpace(rec.AuthType) == "" {
-		rec.AuthType = "password"
+		rec.AuthType = "otp_whatsapp"
 	}
 	if strings.TrimSpace(rec.Role) == "" {
 		rec.Role = "user"
 	}
 
-	return s.issueTokens(ctx, rec.UserUUID, normalizeEmail(rec.Email), rec.AuthType, rec.Role)
+	return s.issueTokens(ctx, rec.UserUUID, normalizePhone(rec.Phone), rec.AuthType, rec.Role)
 }
 
 func newRandomToken(n int) (string, error) {

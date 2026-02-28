@@ -10,17 +10,14 @@ import (
 )
 
 type IUserNotesService interface {
-	RegisterUser(ctx context.Context, email, password, userLanguage string) (domain.User, error)
-	Login(ctx context.Context, email, password string) (domain.User, error)
 	GetUser(ctx context.Context, userID string) (domain.User, error)
 	UpdateUserLanguage(ctx context.Context, userID, userLanguage string) error
 	CreateNote(ctx context.Context, userID, noteType string) (domain.Note, error)
 	ListNotes(ctx context.Context, userID string) ([]domain.Note, error)
-	ResolveUserForOTP(ctx context.Context, channel domain.OTPChannel, destination, email string) (domain.User, error)
+	ResolveUserByPhoneOTP(ctx context.Context, phone string) (domain.User, error)
 }
 
 type IJWTService interface {
-	IssueTokensByEmail(ctx context.Context, email string) (TokenPair, error)
 	IssueUserTokens(ctx context.Context, user domain.User, authType string) (TokenPair, error)
 	IssueAdminToken(username string) (AdminToken, error)
 	VerifyAccess(accessToken string) (*AccessClaims, error)
@@ -68,7 +65,7 @@ func NewServices(
 	}
 
 	appService := NewAppService(repositories.Auth, log)
-	jwtService := NewAuthService(appConfig.JWT, repositories.Auth, repositories.Auth, log)
+	jwtService := NewAuthService(appConfig.JWT, repositories.Auth, log)
 	otpService := NewOTPService(repositories.Auth, appConfig.OTP, log)
 	adsService := NewAdsService(repositories.Auth, log)
 	adminService := NewAdminAuthService(appConfig.Admin, jwtService, log)

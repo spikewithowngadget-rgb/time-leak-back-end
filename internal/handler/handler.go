@@ -44,7 +44,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /swagger", h.SwaggerUI)
 	mux.HandleFunc("GET /swagger.json", h.SwaggerJSON)
 
-	mux.HandleFunc("POST /api/v1/auth/login", h.AuthLogin)
 	mux.HandleFunc("POST /api/v1/auth/otp/request", h.AuthOTPRequest)
 	mux.HandleFunc("POST /api/v1/auth/otp/verify", h.AuthOTPVerify)
 	mux.HandleFunc("POST /api/v1/auth/refresh", h.AuthRefresh)
@@ -54,8 +53,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/v1/me", h.Me)
 
-	mux.HandleFunc("POST /api/v1/users/register", h.RegisterUser)
-	mux.HandleFunc("POST /api/v1/users/login", h.Login)
 	mux.HandleFunc("GET /api/v1/users/{id}", h.GetUser)
 	mux.HandleFunc("PUT /api/v1/users/{id}/language", h.UpdateUserLanguage)
 
@@ -70,17 +67,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/admin/ads/{id}", h.AdminDeleteAd)
 	mux.HandleFunc("GET /api/v1/admin/ads", h.AdminListAds)
 	mux.HandleFunc("GET /api/v1/admin/testing/otp/latest", h.AdminLatestOTP)
-}
-
-type registerReq struct {
-	Email        string `json:"email"`
-	Password     string `json:"password"`
-	UserLanguage string `json:"userLanguage"`
-}
-
-type loginReq struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
 }
 
 type authRefreshReq struct {
@@ -101,15 +87,12 @@ type updateLanguageReq struct {
 }
 
 type otpRequestReq struct {
-	Channel string `json:"channel"`
-	Phone   string `json:"phone"`
-	Email   string `json:"email"`
+	Phone string `json:"phone"`
 }
 
 type otpVerifyReq struct {
 	RequestID string `json:"request_id"`
 	Code      string `json:"code"`
-	Email     string `json:"email"`
 }
 
 type adminLoginReq struct {
@@ -131,64 +114,6 @@ type updateAdReq struct {
 	IsActive  *bool   `json:"is_active"`
 }
 
-func (h *Handler) RegisterUser(w http.ResponseWriter, r *http.Request) {
-	var req registerReq
-	if err := decodeJSONBody(r, &req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "bad request")
-		return
-	}
-
-	user, err := h.app.RegisterUser(r.Context(), req.Email, req.Password, req.UserLanguage)
-	if err != nil {
-		switch {
-		case errors.Is(err, service.ErrEmailAlreadyExists):
-			writeErrorJSON(w, http.StatusConflict, "email already exists")
-		default:
-			writeErrorJSON(w, http.StatusInternalServerError, "internal")
-		}
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, user)
-}
-
-func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
-	var req loginReq
-	if err := decodeJSONBody(r, &req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "bad request")
-		return
-	}
-
-	user, err := h.app.Login(r.Context(), req.Email, req.Password)
-	if err != nil {
-		if errors.Is(err, service.ErrInvalidCredentials) {
-			writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-		writeErrorJSON(w, http.StatusInternalServerError, "internal")
-		return
-	}
-
-	pair, err := h.jwt.IssueUserTokens(r.Context(), user, "password")
-	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, "internal")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"user": user,
-		"tokens": map[string]any{
-			"access_token":       pair.AccessToken,
-			"refresh_token":      pair.RefreshToken,
-			"expires_in_seconds": h.jwt.AccessTTLSeconds(),
-		},
-	})
-}
-
-func (h *Handler) AuthLogin(w http.ResponseWriter, r *http.Request) {
-	h.Login(w, r)
-}
-
 func (h *Handler) AuthOTPRequest(w http.ResponseWriter, r *http.Request) {
 	var req otpRequestReq
 	if err := decodeJSONBody(r, &req); err != nil {
@@ -196,16 +121,10 @@ func (h *Handler) AuthOTPRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	channel := domain.OTPChannel(strings.ToLower(strings.TrimSpace(req.Channel)))
-	destination := strings.TrimSpace(req.Email)
-	if channel == domain.OTPChannelWhatsApp {
-		destination = strings.TrimSpace(req.Phone)
-	}
-
-	result, err := h.otp.RequestOTP(r.Context(), channel, destination)
+	result, err := h.otp.RequestOTP(r.Context(), domain.OTPChannelWhatsApp, req.Phone)
 	if err != nil {
 		switch {
-		case errors.Is(err, service.ErrInvalidOTPChannel), errors.Is(err, service.ErrInvalidOTPDestination):
+		case errors.Is(err, service.ErrInvalidOTPDestination):
 			writeErrorJSON(w, http.StatusBadRequest, "invalid otp request")
 		case errors.Is(err, service.ErrOTPTooManyRequests), errors.Is(err, service.ErrOTPLocked):
 			writeErrorJSON(w, http.StatusTooManyRequests, "otp temporarily unavailable")
@@ -241,24 +160,18 @@ func (h *Handler) AuthOTPVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.app.ResolveUserForOTP(r.Context(), verifyResult.Channel, verifyResult.Destination, req.Email)
+	user, err := h.app.ResolveUserByPhoneOTP(r.Context(), verifyResult.Destination)
 	if err != nil {
 		switch {
-		case errors.Is(err, service.ErrEmailRequiredForWhatsApp):
-			writeErrorJSON(w, http.StatusBadRequest, "email is required for whatsapp otp")
-		case errors.Is(err, service.ErrEmailAlreadyLinked):
-			writeErrorJSON(w, http.StatusConflict, "email already linked to another account")
+		case errors.Is(err, service.ErrPhoneRequired):
+			writeErrorJSON(w, http.StatusBadRequest, "phone is required")
 		default:
 			writeErrorJSON(w, http.StatusInternalServerError, "internal")
 		}
 		return
 	}
 
-	authType := "otp_email"
-	if verifyResult.Channel == domain.OTPChannelWhatsApp {
-		authType = "otp_whatsapp"
-	}
-	pair, err := h.jwt.IssueUserTokens(r.Context(), user, authType)
+	pair, err := h.jwt.IssueUserTokens(r.Context(), user, "otp_whatsapp")
 	if err != nil {
 		writeErrorJSON(w, http.StatusInternalServerError, "internal")
 		return
@@ -307,7 +220,7 @@ func (h *Handler) AuthMe(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user_uuid": claims.UserUUID,
-		"email":     claims.Email,
+		"phone":     claims.Phone,
 		"auth_type": claims.AuthType,
 	})
 }
@@ -641,59 +554,33 @@ func (h *Handler) AdminListAds(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) AdminLatestOTP(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.adminClaimsFromRequest(w, r); !ok {
+		return
+	}
 	if !h.cfg.EnableTestingEndpoints {
 		writeErrorJSON(w, http.StatusNotFound, "not found")
 		return
 	}
 
 	phone := strings.TrimSpace(r.URL.Query().Get("phone"))
-	email := strings.TrimSpace(r.URL.Query().Get("email"))
-	if phone == "" && email == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "provide at least one query param: phone or email")
+	if phone == "" {
+		writeErrorJSON(w, http.StatusBadRequest, "provide phone query param")
 		return
 	}
 
-	type otpLookupTarget struct {
-		channel     domain.OTPChannel
-		destination string
-	}
-
-	targets := make([]otpLookupTarget, 0, 2)
-	if phone != "" {
-		targets = append(targets, otpLookupTarget{
-			channel:     domain.OTPChannelWhatsApp,
-			destination: phone,
-		})
-	}
-	if email != "" {
-		targets = append(targets, otpLookupTarget{
-			channel:     domain.OTPChannelEmail,
-			destination: email,
-		})
-	}
-
-	for idx, target := range targets {
-		otpCode, err := h.otp.GetLatestTestingOTP(r.Context(), target.channel, target.destination)
-		if err == nil {
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(otpCode.Code))
-			return
-		}
-
+	otpCode, err := h.otp.GetLatestTestingOTP(r.Context(), domain.OTPChannelWhatsApp, phone)
+	if err != nil {
 		if errors.Is(err, service.ErrOTPTestingCodeNotFound) {
-			if idx < len(targets)-1 {
-				continue
-			}
 			writeErrorJSON(w, http.StatusNotFound, "otp not found")
 			return
 		}
-
 		writeErrorJSON(w, http.StatusBadRequest, "invalid destination")
 		return
 	}
 
-	writeErrorJSON(w, http.StatusNotFound, "otp not found")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(otpCode.Code))
 }
 
 func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {

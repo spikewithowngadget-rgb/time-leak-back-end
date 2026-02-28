@@ -1,102 +1,99 @@
 package handler
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"testing"
 )
 
 func TestLocalhostServer_JWTAuth_10Users_Positive(t *testing.T) {
-	srv := newLocalTestServer(t)
+	srv := newLocalTestServerWithTestingEndpoints(t, true)
 	defer srv.Close()
+
+	adminLogin := doReq(t, srv.URL, http.MethodPost, "/api/v1/admin/auth/login", map[string]any{
+		"username": "Admin",
+		"password": "QRT123",
+	})
+	if adminLogin.StatusCode != http.StatusOK {
+		t.Fatalf("admin login status: got %d want 200", adminLogin.StatusCode)
+	}
+	var adminBody struct {
+		AccessToken string `json:"access_token"`
+	}
+	decodeJSON(t, adminLogin, &adminBody)
 
 	for i := 1; i <= 10; i++ {
 		i := i
 		t.Run(fmt.Sprintf("user-%02d", i), func(t *testing.T) {
-			email := fmt.Sprintf("user%02d@example.com", i)
-			password := fmt.Sprintf("Pass#%02d", i)
-			lang := "en"
-			if i%2 == 0 {
-				lang = "ru"
+			phone := fmt.Sprintf("+7701000%04d", i)
+
+			otpReq := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/otp/request", map[string]any{
+				"phone": phone,
+			})
+			if otpReq.StatusCode != http.StatusOK {
+				t.Fatalf("otp request status: got %d want 200", otpReq.StatusCode)
+			}
+			var otpReqBody struct {
+				RequestID string `json:"request_id"`
+			}
+			decodeJSON(t, otpReq, &otpReqBody)
+
+			latestOTP := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/admin/testing/otp/latest?phone="+url.QueryEscape(phone), nil, adminBody.AccessToken)
+			if latestOTP.StatusCode != http.StatusOK {
+				t.Fatalf("latest otp status: got %d want 200", latestOTP.StatusCode)
+			}
+			codeRaw, err := io.ReadAll(latestOTP.Body)
+			if err != nil {
+				t.Fatalf("read latest otp error: %v", err)
+			}
+			_ = latestOTP.Body.Close()
+			code := strings.TrimSpace(string(codeRaw))
+			if len(code) != 4 {
+				t.Fatalf("expected 4-digit otp, got %q", code)
 			}
 
-			// 1) register
-			regResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/users/register", map[string]any{
-				"email":        email,
-				"password":     password,
-				"userLanguage": lang,
+			verify := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/otp/verify", map[string]any{
+				"request_id": otpReqBody.RequestID,
+				"code":       code,
 			})
-			if regResp.StatusCode != http.StatusCreated {
-				t.Fatalf("register status: got %d want 201", regResp.StatusCode)
+			if verify.StatusCode != http.StatusOK {
+				t.Fatalf("otp verify status: got %d want 200", verify.StatusCode)
 			}
-			var regBody struct {
-				UserID string `json:"userId"`
-				Email  string `json:"email"`
+			var verifyBody struct {
+				AccessToken  string `json:"access_token"`
+				RefreshToken string `json:"refresh_token"`
 			}
-			decodeJSON(t, regResp, &regBody)
-			if regBody.UserID == "" {
-				t.Fatal("expected userId")
-			}
-
-			// 2) JWT login
-			loginResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/login", map[string]any{
-				"email":    email,
-				"password": password,
-			})
-			if loginResp.StatusCode != http.StatusOK {
-				t.Fatalf("auth login status: got %d want 200", loginResp.StatusCode)
-			}
-			var loginBody struct {
-				User struct {
-					UserID string `json:"userId"`
-					Email  string `json:"email"`
-				} `json:"user"`
-				Tokens struct {
-					AccessToken  string `json:"access_token"`
-					RefreshToken string `json:"refresh_token"`
-				} `json:"tokens"`
-			}
-			decodeJSON(t, loginResp, &loginBody)
-			if loginBody.Tokens.AccessToken == "" || loginBody.Tokens.RefreshToken == "" {
+			decodeJSON(t, verify, &verifyBody)
+			if verifyBody.AccessToken == "" || verifyBody.RefreshToken == "" {
 				t.Fatal("expected access and refresh tokens")
 			}
 
-			// 3) JWT me (protected)
-			meResp := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/me", nil, loginBody.Tokens.AccessToken)
+			meResp := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/me", nil, verifyBody.AccessToken)
 			if meResp.StatusCode != http.StatusOK {
 				t.Fatalf("auth me status: got %d want 200", meResp.StatusCode)
 			}
-			var meBody struct {
-				UserUUID string `json:"user_uuid"`
-				Email    string `json:"email"`
-			}
-			decodeJSON(t, meResp, &meBody)
-			if meBody.UserUUID != regBody.UserID {
-				t.Fatalf("expected user_uuid %q, got %q", regBody.UserID, meBody.UserUUID)
-			}
+			_ = meResp.Body.Close()
 
-			// 4) create secure note #1
 			note1Resp := doReqAuth(t, srv.URL, http.MethodPost, "/api/v1/auth/notes", map[string]any{
 				"note_type": fmt.Sprintf("deadline-%d-1", i),
-			}, loginBody.Tokens.AccessToken)
+			}, verifyBody.AccessToken)
 			if note1Resp.StatusCode != http.StatusCreated {
 				t.Fatalf("create note1 status: got %d want 201", note1Resp.StatusCode)
 			}
 			_ = note1Resp.Body.Close()
 
-			// 5) create secure note #2
 			note2Resp := doReqAuth(t, srv.URL, http.MethodPost, "/api/v1/auth/notes", map[string]any{
 				"note_type": fmt.Sprintf("deadline-%d-2", i),
-			}, loginBody.Tokens.AccessToken)
+			}, verifyBody.AccessToken)
 			if note2Resp.StatusCode != http.StatusCreated {
 				t.Fatalf("create note2 status: got %d want 201", note2Resp.StatusCode)
 			}
 			_ = note2Resp.Body.Close()
 
-			// 6) list secure notes
-			listResp := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/notes", nil, loginBody.Tokens.AccessToken)
+			listResp := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/notes", nil, verifyBody.AccessToken)
 			if listResp.StatusCode != http.StatusOK {
 				t.Fatalf("list notes status: got %d want 200", listResp.StatusCode)
 			}
@@ -108,23 +105,20 @@ func TestLocalhostServer_JWTAuth_10Users_Positive(t *testing.T) {
 				t.Fatalf("expected at least 2 notes, got %d", listBody.Total)
 			}
 
-			// 7) refresh
 			refreshResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/refresh", map[string]any{
-				"refresh_token": loginBody.Tokens.RefreshToken,
+				"refresh_token": verifyBody.RefreshToken,
 			})
 			if refreshResp.StatusCode != http.StatusOK {
 				t.Fatalf("refresh status: got %d want 200", refreshResp.StatusCode)
 			}
 			var refreshBody struct {
-				AccessToken  string `json:"access_token"`
-				RefreshToken string `json:"refresh_token"`
+				AccessToken string `json:"access_token"`
 			}
 			decodeJSON(t, refreshResp, &refreshBody)
-			if refreshBody.AccessToken == "" || refreshBody.RefreshToken == "" {
-				t.Fatal("expected refreshed token pair")
+			if refreshBody.AccessToken == "" {
+				t.Fatal("expected refreshed access token")
 			}
 
-			// 8) me with refreshed access
 			me2Resp := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/me", nil, refreshBody.AccessToken)
 			if me2Resp.StatusCode != http.StatusOK {
 				t.Fatalf("auth me after refresh status: got %d want 200", me2Resp.StatusCode)
@@ -135,21 +129,8 @@ func TestLocalhostServer_JWTAuth_10Users_Positive(t *testing.T) {
 }
 
 func TestLocalhostServer_JWTAuth_NegativeSecurity(t *testing.T) {
-	srv := newLocalTestServer(t)
+	srv := newLocalTestServerWithTestingEndpoints(t, true)
 	defer srv.Close()
-
-	email := "negative-user@example.com"
-	password := "Pass#99"
-
-	regResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/users/register", map[string]any{
-		"email":        email,
-		"password":     password,
-		"userLanguage": "en",
-	})
-	if regResp.StatusCode != http.StatusCreated {
-		t.Fatalf("register status: got %d want 201", regResp.StatusCode)
-	}
-	_ = regResp.Body.Close()
 
 	tests := []struct {
 		name       string
@@ -159,13 +140,6 @@ func TestLocalhostServer_JWTAuth_NegativeSecurity(t *testing.T) {
 		token      string
 		wantStatus int
 	}{
-		{
-			name:       "wrong password login",
-			method:     http.MethodPost,
-			path:       "/api/v1/auth/login",
-			body:       map[string]any{"email": email, "password": "wrong-pass"},
-			wantStatus: http.StatusUnauthorized,
-		},
 		{
 			name:       "me without token",
 			method:     http.MethodGet,
@@ -214,6 +188,12 @@ func TestLocalhostServer_JWTAuth_NegativeSecurity(t *testing.T) {
 			body:       map[string]any{"refresh_token": " "},
 			wantStatus: http.StatusUnauthorized,
 		},
+		{
+			name:       "admin latest otp without token",
+			method:     http.MethodGet,
+			path:       "/api/v1/admin/testing/otp/latest?phone=%2B77015556677",
+			wantStatus: http.StatusUnauthorized,
+		},
 	}
 
 	for _, tt := range tests {
@@ -226,33 +206,4 @@ func TestLocalhostServer_JWTAuth_NegativeSecurity(t *testing.T) {
 			_ = resp.Body.Close()
 		})
 	}
-}
-
-func doReqAuth(t *testing.T, baseURL, method, path string, body any, accessToken string) *http.Response {
-	t.Helper()
-
-	var payload []byte
-	if body != nil {
-		var err error
-		payload, err = json.Marshal(body)
-		if err != nil {
-			t.Fatalf("json marshal error: %v", err)
-		}
-	}
-
-	req, err := http.NewRequest(method, baseURL+path, bytes.NewReader(payload))
-	if err != nil {
-		t.Fatalf("new request error: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if accessToken != "" {
-		req.Header.Set("Authorization", "Bearer "+accessToken)
-	}
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("http request error: %v", err)
-	}
-	return resp
 }

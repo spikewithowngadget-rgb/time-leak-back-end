@@ -11,18 +11,6 @@ import (
 	"go.uber.org/zap"
 )
 
-type mockUserRepo struct {
-	uuid string
-	err  error
-}
-
-func (m *mockUserRepo) GetOrCreateUUIDByEmail(_ context.Context, _ string) (string, error) {
-	if m.err != nil {
-		return "", m.err
-	}
-	return m.uuid, nil
-}
-
 type mockRefreshStore struct {
 	saveErr   error
 	getErr    error
@@ -71,9 +59,8 @@ func (m *mockRefreshStore) Revoke(_ context.Context, token string) error {
 	return nil
 }
 
-func newAuthForTest() (*AuthService, *mockRefreshStore, *mockUserRepo) {
+func newAuthForTest() (*AuthService, *mockRefreshStore) {
 	store := newMockRefreshStore()
-	users := &mockUserRepo{uuid: "11111111-1111-1111-1111-111111111111"}
 	svc := NewAuthService(config.JWTConfig{
 		AccessSecret:   "test-secret",
 		AdminSecret:    "test-admin-secret",
@@ -81,16 +68,16 @@ func newAuthForTest() (*AuthService, *mockRefreshStore, *mockUserRepo) {
 		AdminAccessTTL: 60 * time.Second,
 		RefreshTTL:     24 * time.Hour,
 		Issuer:         "test-suite",
-	}, store, users, zap.NewNop())
-	return svc, store, users
+	}, store, zap.NewNop())
+	return svc, store
 }
 
-func TestJWT_IssueTokensByEmail_Success(t *testing.T) {
-	svc, store, _ := newAuthForTest()
+func TestJWT_IssueUserTokens_Success(t *testing.T) {
+	svc, store := newAuthForTest()
 
-	pair, err := svc.IssueTokensByEmail(context.Background(), "Demo@Example.com ")
+	pair, err := svc.IssueUserTokens(context.Background(), domain.User{UserID: "u-1", Phone: "+77015556677"}, "otp_whatsapp")
 	if err != nil {
-		t.Fatalf("IssueTokensByEmail error: %v", err)
+		t.Fatalf("IssueUserTokens error: %v", err)
 	}
 	if pair.AccessToken == "" {
 		t.Fatal("expected access token")
@@ -103,13 +90,13 @@ func TestJWT_IssueTokensByEmail_Success(t *testing.T) {
 	if !ok {
 		t.Fatal("expected refresh token to be saved")
 	}
-	if rec.Email != "demo@example.com" {
-		t.Fatalf("expected normalized email, got %q", rec.Email)
+	if rec.Phone != "+77015556677" {
+		t.Fatalf("expected normalized phone, got %q", rec.Phone)
 	}
-	if rec.UserUUID != "11111111-1111-1111-1111-111111111111" {
+	if rec.UserUUID != "u-1" {
 		t.Fatalf("unexpected user uuid: %q", rec.UserUUID)
 	}
-	if rec.AuthType != "password" {
+	if rec.AuthType != "otp_whatsapp" {
 		t.Fatalf("unexpected auth type: %q", rec.AuthType)
 	}
 	if rec.Role != "user" {
@@ -117,20 +104,19 @@ func TestJWT_IssueTokensByEmail_Success(t *testing.T) {
 	}
 }
 
-func TestJWT_IssueTokensByEmail_EmptyEmail(t *testing.T) {
-	svc, _, _ := newAuthForTest()
+func TestJWT_IssueUserTokens_EmptyPhone(t *testing.T) {
+	svc, _ := newAuthForTest()
 
-	_, err := svc.IssueTokensByEmail(context.Background(), "   ")
+	_, err := svc.IssueUserTokens(context.Background(), domain.User{UserID: "u-1"}, "otp_whatsapp")
 	if err == nil {
-		t.Fatal("expected error for empty email")
+		t.Fatal("expected error for empty phone")
 	}
 }
 
 func TestJWT_VerifyUserAccess_Success(t *testing.T) {
-	svc, _, _ := newAuthForTest()
-	user := domain.User{UserID: "u-1", Email: "a@b.com"}
+	svc, _ := newAuthForTest()
 
-	pair, err := svc.IssueUserTokens(context.Background(), user, "otp_email")
+	pair, err := svc.IssueUserTokens(context.Background(), domain.User{UserID: "u-1", Phone: "+77015556677"}, "otp_whatsapp")
 	if err != nil {
 		t.Fatalf("IssueUserTokens error: %v", err)
 	}
@@ -142,10 +128,10 @@ func TestJWT_VerifyUserAccess_Success(t *testing.T) {
 	if claims.UserUUID != "u-1" {
 		t.Fatalf("unexpected user uuid: %q", claims.UserUUID)
 	}
-	if claims.Email != "a@b.com" {
-		t.Fatalf("unexpected email: %q", claims.Email)
+	if claims.Phone != "+77015556677" {
+		t.Fatalf("unexpected phone: %q", claims.Phone)
 	}
-	if claims.AuthType != "otp_email" {
+	if claims.AuthType != "otp_whatsapp" {
 		t.Fatalf("unexpected auth_type: %q", claims.AuthType)
 	}
 	if claims.Role != "user" {
@@ -154,7 +140,7 @@ func TestJWT_VerifyUserAccess_Success(t *testing.T) {
 }
 
 func TestJWT_VerifyAdminAccess_Success(t *testing.T) {
-	svc, _, _ := newAuthForTest()
+	svc, _ := newAuthForTest()
 	adminToken, err := svc.IssueAdminToken("Admin")
 	if err != nil {
 		t.Fatalf("IssueAdminToken error: %v", err)
@@ -173,7 +159,7 @@ func TestJWT_VerifyAdminAccess_Success(t *testing.T) {
 }
 
 func TestJWT_VerifyAccess_InvalidToken(t *testing.T) {
-	svc, _, _ := newAuthForTest()
+	svc, _ := newAuthForTest()
 
 	_, err := svc.VerifyAccess("not-a-token")
 	if !errors.Is(err, ErrInvalidToken) {
@@ -182,11 +168,10 @@ func TestJWT_VerifyAccess_InvalidToken(t *testing.T) {
 }
 
 func TestJWT_VerifyAccess_ExpiredToken(t *testing.T) {
-	svc, _, _ := newAuthForTest()
+	svc, _ := newAuthForTest()
 	svc.accessTTL = -1 * time.Second
-	user := domain.User{UserID: "u-1", Email: "a@b.com"}
 
-	pair, err := svc.IssueUserTokens(context.Background(), user, "password")
+	pair, err := svc.IssueUserTokens(context.Background(), domain.User{UserID: "u-1", Phone: "+77015556677"}, "otp_whatsapp")
 	if err != nil {
 		t.Fatalf("IssueUserTokens error: %v", err)
 	}
@@ -198,10 +183,9 @@ func TestJWT_VerifyAccess_ExpiredToken(t *testing.T) {
 }
 
 func TestJWT_Refresh_Success(t *testing.T) {
-	svc, store, _ := newAuthForTest()
-	user := domain.User{UserID: "u-1", Email: "a@b.com"}
+	svc, store := newAuthForTest()
 
-	pair, err := svc.IssueUserTokens(context.Background(), user, "otp_whatsapp")
+	pair, err := svc.IssueUserTokens(context.Background(), domain.User{UserID: "u-1", Phone: "+77015556677"}, "otp_whatsapp")
 	if err != nil {
 		t.Fatalf("IssueUserTokens error: %v", err)
 	}
@@ -219,7 +203,7 @@ func TestJWT_Refresh_Success(t *testing.T) {
 }
 
 func TestJWT_Refresh_EmptyToken(t *testing.T) {
-	svc, _, _ := newAuthForTest()
+	svc, _ := newAuthForTest()
 
 	_, err := svc.Refresh(context.Background(), " ")
 	if !errors.Is(err, ErrRefreshNotFound) {
@@ -228,7 +212,7 @@ func TestJWT_Refresh_EmptyToken(t *testing.T) {
 }
 
 func TestJWT_Refresh_NotFound(t *testing.T) {
-	svc, _, _ := newAuthForTest()
+	svc, _ := newAuthForTest()
 
 	_, err := svc.Refresh(context.Background(), "missing")
 	if !errors.Is(err, ErrRefreshNotFound) {
@@ -237,11 +221,11 @@ func TestJWT_Refresh_NotFound(t *testing.T) {
 }
 
 func TestJWT_Refresh_Revoked(t *testing.T) {
-	svc, store, _ := newAuthForTest()
+	svc, store := newAuthForTest()
 	store.data["r1"] = domain.RefreshRecord{
 		UserUUID:  "u-1",
-		Email:     "a@b.com",
-		AuthType:  "password",
+		Phone:     "+77015556677",
+		AuthType:  "otp_whatsapp",
 		Role:      "user",
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 		Revoked:   true,
@@ -254,11 +238,11 @@ func TestJWT_Refresh_Revoked(t *testing.T) {
 }
 
 func TestJWT_Refresh_Expired(t *testing.T) {
-	svc, store, _ := newAuthForTest()
+	svc, store := newAuthForTest()
 	store.data["r1"] = domain.RefreshRecord{
 		UserUUID:  "u-1",
-		Email:     "a@b.com",
-		AuthType:  "password",
+		Phone:     "+77015556677",
+		AuthType:  "otp_whatsapp",
 		Role:      "user",
 		ExpiresAt: time.Now().Add(-1 * time.Minute),
 		Revoked:   false,

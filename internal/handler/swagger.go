@@ -23,7 +23,7 @@ const swaggerSpec = `{
   "info": {
     "title": "Timeleak API",
     "version": "1.0.0",
-    "description": "Versioned API under /api/v1 with OTP auth, refresh rotation, admin auth, and ads rotation."
+    "description": "Versioned API under /api/v1 with WhatsApp OTP auth, refresh rotation, admin auth, and ads rotation."
   },
   "servers": [
     { "url": "/" }
@@ -37,80 +37,9 @@ const swaggerSpec = `{
         }
       }
     },
-    "/api/v1/users/register": {
-      "post": {
-        "summary": "Register user (email/password)",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/RegisterRequest" }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "User created",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/User" }
-              }
-            }
-          },
-          "409": { "description": "Email already exists" }
-        }
-      }
-    },
-    "/api/v1/users/login": {
-      "post": {
-        "summary": "Login with email/password",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/LoginRequest" }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Authenticated",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/LoginResponse" }
-              }
-            }
-          },
-          "401": { "description": "Unauthorized" }
-        }
-      }
-    },
-    "/api/v1/auth/login": {
-      "post": {
-        "summary": "Alias of /users/login",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/LoginRequest" }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Authenticated",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/LoginResponse" }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/auth/otp/request": {
       "post": {
-        "summary": "Request OTP via WhatsApp or Email",
+        "summary": "Request WhatsApp OTP",
         "requestBody": {
           "required": true,
           "content": {
@@ -134,8 +63,7 @@ const swaggerSpec = `{
     },
     "/api/v1/auth/otp/verify": {
       "post": {
-        "summary": "Verify OTP and issue JWT token pair",
-        "description": "If OTP channel is whatsapp, email must be provided in this request.",
+        "summary": "Verify WhatsApp OTP and issue token pair",
         "requestBody": {
           "required": true,
           "content": {
@@ -209,6 +137,52 @@ const swaggerSpec = `{
         }
       }
     },
+    "/api/v1/auth/notes": {
+      "post": {
+        "summary": "Create note for authenticated user",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["note_type"],
+                "properties": {
+                  "note_type": { "type": "string", "example": "deadline" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Note" }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" }
+        }
+      },
+      "get": {
+        "summary": "List notes for authenticated user",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Notes",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/NotesListResponse" }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" }
+        }
+      }
+    },
     "/api/v1/users/{id}": {
       "get": {
         "summary": "Get user by ID",
@@ -271,54 +245,10 @@ const swaggerSpec = `{
     },
     "/api/v1/users/{id}/notes": {
       "get": {
-        "summary": "List notes by user",
+        "summary": "List notes by user ID",
         "parameters": [
           { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
         ],
-        "responses": {
-          "200": {
-            "description": "Notes",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/NotesListResponse" }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/auth/notes": {
-      "post": {
-        "summary": "Create note for authenticated user",
-        "security": [{ "BearerAuth": [] }],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["note_type"],
-                "properties": {
-                  "note_type": { "type": "string", "example": "deadline" }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Created",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/Note" }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "summary": "List authenticated user notes",
-        "security": [{ "BearerAuth": [] }],
         "responses": {
           "200": {
             "description": "Notes",
@@ -344,7 +274,7 @@ const swaggerSpec = `{
         },
         "responses": {
           "200": {
-            "description": "Admin access token",
+            "description": "Authenticated",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/AdminLoginResponse" }
@@ -369,7 +299,7 @@ const swaggerSpec = `{
         },
         "responses": {
           "201": {
-            "description": "Created ad",
+            "description": "Created",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/Ad" }
@@ -382,13 +312,13 @@ const swaggerSpec = `{
         "summary": "List ads",
         "security": [{ "BearerAuth": [] }],
         "parameters": [
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "example": 20 } },
-          { "name": "offset", "in": "query", "schema": { "type": "integer", "example": 0 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20 } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } },
           { "name": "active", "in": "query", "schema": { "type": "boolean" } }
         ],
         "responses": {
           "200": {
-            "description": "Ads",
+            "description": "Ads list",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/AdsListResponse" }
@@ -415,7 +345,7 @@ const swaggerSpec = `{
         },
         "responses": {
           "200": {
-            "description": "Updated ad",
+            "description": "Updated",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/Ad" }
@@ -455,20 +385,21 @@ const swaggerSpec = `{
     "/api/v1/admin/testing/otp/latest": {
       "get": {
         "summary": "Get latest OTP code (DEV ONLY)",
-        "description": "DEV ONLY: returns OTP code in plain text for testing. Requires ENABLE_TESTING_ENDPOINTS=true. Provide phone or email (if both are set, phone is checked first).",
+        "description": "DEV ONLY: returns OTP code in plain text for testing. Requires admin JWT and ENABLE_TESTING_ENDPOINTS=true.",
+        "security": [{ "BearerAuth": [] }],
         "parameters": [
-          { "name": "phone", "in": "query", "schema": { "type": "string" } },
-          { "name": "email", "in": "query", "schema": { "type": "string", "format": "email" } }
+          { "name": "phone", "in": "query", "required": true, "schema": { "type": "string", "example": "+77015556677" } }
         ],
         "responses": {
           "200": {
             "description": "OTP code in plain text",
             "content": {
               "text/plain": {
-                "schema": { "type": "string", "example": "123456" }
+                "schema": { "type": "string", "example": "1234" }
               }
             }
           },
+          "401": { "description": "Unauthorized" },
           "404": { "description": "Disabled or code not found" }
         }
       }
@@ -489,45 +420,11 @@ const swaggerSpec = `{
           "error": { "type": "string", "example": "unauthorized" }
         }
       },
-      "RegisterRequest": {
-        "type": "object",
-        "required": ["email", "password"],
-        "properties": {
-          "email": { "type": "string", "format": "email", "example": "user@example.com" },
-          "password": { "type": "string", "example": "secret-123" },
-          "userLanguage": { "type": "string", "example": "en" }
-        }
-      },
-      "LoginRequest": {
-        "type": "object",
-        "required": ["email", "password"],
-        "properties": {
-          "email": { "type": "string", "format": "email", "example": "user@example.com" },
-          "password": { "type": "string", "example": "secret-123" }
-        }
-      },
-      "TokenPayload": {
-        "type": "object",
-        "properties": {
-          "access_token": { "type": "string" },
-          "refresh_token": { "type": "string" },
-          "expires_in_seconds": { "type": "integer", "example": 60 }
-        }
-      },
-      "LoginResponse": {
-        "type": "object",
-        "properties": {
-          "user": { "$ref": "#/components/schemas/User" },
-          "tokens": { "$ref": "#/components/schemas/TokenPayload" }
-        }
-      },
       "OTPRequestInput": {
         "type": "object",
-        "required": ["channel"],
+        "required": ["phone"],
         "properties": {
-          "channel": { "type": "string", "enum": ["whatsapp", "email"], "example": "email" },
-          "phone": { "type": "string", "example": "+77015556677" },
-          "email": { "type": "string", "format": "email", "example": "user@example.com" }
+          "phone": { "type": "string", "example": "+77015556677" }
         }
       },
       "OTPRequestResponse": {
@@ -542,8 +439,7 @@ const swaggerSpec = `{
         "required": ["request_id", "code"],
         "properties": {
           "request_id": { "type": "string" },
-          "code": { "type": "string", "example": "123456" },
-          "email": { "type": "string", "format": "email", "example": "user@example.com" }
+          "code": { "type": "string", "example": "1234" }
         }
       },
       "OTPVerifyResponse": {
@@ -553,6 +449,14 @@ const swaggerSpec = `{
           "refresh_token": { "type": "string" },
           "expires_in_seconds": { "type": "integer", "example": 60 },
           "user": { "$ref": "#/components/schemas/User" }
+        }
+      },
+      "TokenPayload": {
+        "type": "object",
+        "properties": {
+          "access_token": { "type": "string" },
+          "refresh_token": { "type": "string" },
+          "expires_in_seconds": { "type": "integer", "example": 60 }
         }
       },
       "RefreshRequest": {

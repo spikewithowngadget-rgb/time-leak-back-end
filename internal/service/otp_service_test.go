@@ -141,7 +141,7 @@ func TestOTP_Verify_Success(t *testing.T) {
 	svc, repo := newOTPServiceForTest()
 	ctx := context.Background()
 
-	result, err := svc.RequestOTP(ctx, domain.OTPChannelEmail, "user@example.com")
+	result, err := svc.RequestOTP(ctx, domain.OTPChannelWhatsApp, "+77015556677")
 	if err != nil {
 		t.Fatalf("RequestOTP error: %v", err)
 	}
@@ -149,19 +149,22 @@ func TestOTP_Verify_Success(t *testing.T) {
 		t.Fatal("expected request id")
 	}
 
-	debugCode, err := svc.GetLatestTestingOTP(ctx, domain.OTPChannelEmail, "user@example.com")
+	debugCode, err := svc.GetLatestTestingOTP(ctx, domain.OTPChannelWhatsApp, "+77015556677")
 	if err != nil {
 		t.Fatalf("GetLatestTestingOTP error: %v", err)
+	}
+	if len(debugCode.Code) != 4 {
+		t.Fatalf("expected 4-digit OTP code, got %q", debugCode.Code)
 	}
 
 	verifyResult, err := svc.VerifyOTP(ctx, result.RequestID, debugCode.Code)
 	if err != nil {
 		t.Fatalf("VerifyOTP error: %v", err)
 	}
-	if verifyResult.Channel != domain.OTPChannelEmail {
+	if verifyResult.Channel != domain.OTPChannelWhatsApp {
 		t.Fatalf("unexpected channel: %q", verifyResult.Channel)
 	}
-	if verifyResult.Destination != "user@example.com" {
+	if verifyResult.Destination != "+77015556677" {
 		t.Fatalf("unexpected destination: %q", verifyResult.Destination)
 	}
 
@@ -185,9 +188,9 @@ func TestOTP_Verify_AttemptsAndLock(t *testing.T) {
 		t.Fatalf("GetLatestTestingOTP error: %v", err)
 	}
 
-	wrongCode := "999999"
+	wrongCode := "9999"
 	if wrongCode == debugCode.Code {
-		wrongCode = "888888"
+		wrongCode = "8888"
 	}
 
 	_, err = svc.VerifyOTP(ctx, result.RequestID, wrongCode)
