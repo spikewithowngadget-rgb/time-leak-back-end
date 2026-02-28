@@ -26,7 +26,7 @@ const swaggerSpec = `{
     "description": "Versioned API under /api/v1 with OTP auth, refresh rotation, admin auth, and ads rotation."
   },
   "servers": [
-    { "url": "http://localhost:8081" }
+    { "url": "/" }
   ],
   "paths": {
     "/health": {

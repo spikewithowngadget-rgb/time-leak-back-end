@@ -174,6 +174,50 @@ func TestLocalhostServer_UserAndNotesFlow(t *testing.T) {
 			}
 		}
 	}
+
+	servers, ok := spec["servers"].([]any)
+	if !ok || len(servers) == 0 {
+		t.Fatal("swagger spec missing servers")
+	}
+	firstServer, ok := servers[0].(map[string]any)
+	if !ok {
+		t.Fatal("swagger spec first server has invalid shape")
+	}
+	if serverURL, _ := firstServer["url"].(string); serverURL != "/" {
+		t.Fatalf("expected swagger server url '/', got %q", serverURL)
+	}
+}
+
+func TestLocalhostServer_CORSPreflight(t *testing.T) {
+	srv := newLocalTestServer(t)
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodOptions, srv.URL+"/api/v1/users/login", nil)
+	if err != nil {
+		t.Fatalf("new request error: %v", err)
+	}
+	req.Header.Set("Origin", "https://docs.example.com")
+	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	req.Header.Set("Access-Control-Request-Headers", "Authorization, Content-Type")
+
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		t.Fatalf("http request error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("preflight status: got %d want 204", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("allow-origin header: got %q want '*'", got)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Methods"); got == "" {
+		t.Fatal("expected Access-Control-Allow-Methods header")
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Headers"); got == "" {
+		t.Fatal("expected Access-Control-Allow-Headers header")
+	}
 }
 
 func newLocalTestServer(t *testing.T) *httptest.Server {
@@ -224,7 +268,7 @@ func newLocalTestServer(t *testing.T) *httptest.Server {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	return httptest.NewServer(mux)
+	return httptest.NewServer(WithCORS(mux))
 }
 
 func doReq(t *testing.T, baseURL, method, path string, body any) *http.Response {

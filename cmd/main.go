@@ -61,7 +61,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:    cfg.Addr,
-		Handler: mux,
+		Handler: handler.WithCORS(mux),
 	}
 
 	go func() {
