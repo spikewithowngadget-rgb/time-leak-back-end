@@ -456,7 +456,6 @@ const swaggerSpec = `{
       "get": {
         "summary": "Get latest OTP code (DEV ONLY)",
         "description": "DEV ONLY: returns OTP code in plain text for testing. Must be disabled in non-dev environments via ENABLE_TESTING_ENDPOINTS=false.",
-        "security": [{ "BearerAuth": [] }],
         "parameters": [
           { "name": "phone", "in": "query", "schema": { "type": "string" } },
           { "name": "email", "in": "query", "schema": { "type": "string", "format": "email" } }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -165,6 +166,13 @@ func TestLocalhostServer_UserAndNotesFlow(t *testing.T) {
 	if _, ok := paths["/api/v1/users/login"]; !ok {
 		t.Fatal("swagger spec missing users/login path")
 	}
+	if otpLatestPath, ok := paths["/api/v1/admin/testing/otp/latest"].(map[string]any); ok {
+		if otpLatestGet, ok := otpLatestPath["get"].(map[string]any); ok {
+			if _, hasSecurity := otpLatestGet["security"]; hasSecurity {
+				t.Fatal("expected no security requirement for /api/v1/admin/testing/otp/latest")
+			}
+		}
+	}
 	components, ok := spec["components"].(map[string]any)
 	if ok {
 		schemas, ok := components["schemas"].(map[string]any)
@@ -220,7 +228,49 @@ func TestLocalhostServer_CORSPreflight(t *testing.T) {
 	}
 }
 
+func TestLocalhostServer_AdminLatestOTP_NoAuthTokenRequired(t *testing.T) {
+	srv := newLocalTestServerWithTestingEndpoints(t, true)
+	defer srv.Close()
+
+	otpReqResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/otp/request", map[string]any{
+		"channel": "email",
+		"email":   "otp-user@example.com",
+	})
+	if otpReqResp.StatusCode != http.StatusOK {
+		t.Fatalf("otp request status: got %d want 200", otpReqResp.StatusCode)
+	}
+	_ = otpReqResp.Body.Close()
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/admin/testing/otp/latest?email=otp-user@example.com", nil)
+	if err != nil {
+		t.Fatalf("new request error: %v", err)
+	}
+
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		t.Fatalf("http request error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("latest otp status: got %d want 200", resp.StatusCode)
+	}
+
+	codeBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body error: %v", err)
+	}
+	code := strings.TrimSpace(string(codeBytes))
+	if len(code) != 6 {
+		t.Fatalf("expected 6-digit otp code, got %q", code)
+	}
+}
+
 func newLocalTestServer(t *testing.T) *httptest.Server {
+	return newLocalTestServerWithTestingEndpoints(t, false)
+}
+
+func newLocalTestServerWithTestingEndpoints(t *testing.T, enableTestingEndpoints bool) *httptest.Server {
 	t.Helper()
 
 	tmp := t.TempDir()
@@ -250,6 +300,7 @@ func newLocalTestServer(t *testing.T) *httptest.Server {
 			Username: "Admin",
 			Password: "QRT123",
 		},
+		EnableTestingEndpoints: enableTestingEndpoints,
 	}
 
 	log := zap.NewNop()
