@@ -69,6 +69,23 @@ type OTPVerifyResult struct {
 	Destination string
 }
 
+type AuthVerificationPurpose string
+
+const (
+	AuthVerificationPurposeRegistration  AuthVerificationPurpose = "registration"
+	AuthVerificationPurposePasswordReset AuthVerificationPurpose = "password_reset"
+)
+
+type AuthVerification struct {
+	ID        string
+	RequestID string
+	Purpose   AuthVerificationPurpose
+	Phone     string
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	CreatedAt time.Time
+}
+
 type OTPTestingCode struct {
 	RequestID   string     `json:"request_id"`
 	Channel     OTPChannel `json:"channel"`

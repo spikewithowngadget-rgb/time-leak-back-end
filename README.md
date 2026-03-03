@@ -8,10 +8,15 @@ Go backend with SQLite, JWT auth, phone-only WhatsApp OTP auth (development stub
 - Existing user/profile/notes endpoints preserved
 - Access token TTL is exactly `60s`
 - Refresh token rotation with revocation
-- OTP auth (phone-only WhatsApp):
+- OTP auth (phone-only WhatsApp, demo stub):
   - `POST /api/v1/auth/otp/request`
   - `POST /api/v1/auth/otp/verify`
-  - OTP stored hashed (HMAC-SHA256), 4-digit code, TTL `60s`
+  - `POST /api/v1/auth/register`
+  - `POST /api/v1/auth/login`
+  - `POST /api/v1/auth/password-reset/otp/request`
+  - `POST /api/v1/auth/password-reset/otp/verify`
+  - `POST /api/v1/auth/password-reset/confirm`
+  - OTP stored hashed (HMAC-SHA256), 4-digit code, TTL `3-5m`
   - rate limit + attempts lockout
 - Admin auth:
   - `POST /api/v1/admin/auth/login`
@@ -39,6 +44,7 @@ Environment overrides:
 - `OTP_REQUEST_COOLDOWN_SEC`
 - `OTP_MAX_ATTEMPTS`
 - `OTP_LOCK_DURATION_SEC`
+- `OTP_EXPIRES_IN_SEC` (must be between `180` and `300`)
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD`
 - `ENABLE_TESTING_ENDPOINTS` (`false` by default)
@@ -54,6 +60,7 @@ Migrations are embedded and applied automatically at startup from:
 - `traits/database/migrations/0005_ads.sql`
 - `traits/database/migrations/0006_refresh_tokens_auth_type.sql`
 - `traits/database/migrations/0007_refresh_tokens_role.sql`
+- `traits/database/migrations/0008_auth_verifications.sql`
 
 No manual migrate command is required.
 

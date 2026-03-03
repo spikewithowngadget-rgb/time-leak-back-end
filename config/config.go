@@ -65,7 +65,7 @@ func NewConfig() (*Config, error) {
 			RequestCooldown: 30 * time.Second,
 			MaxAttempts:     5,
 			LockDuration:    2 * time.Minute,
-			ExpiresIn:       60 * time.Second,
+			ExpiresIn:       5 * time.Minute,
 		},
 		Admin: AdminConfig{
 			Username: "Admin",
@@ -146,6 +146,13 @@ func NewConfig() (*Config, error) {
 		}
 		cfg.OTP.LockDuration = time.Duration(n) * time.Second
 	}
+	if v := os.Getenv("OTP_EXPIRES_IN_SEC"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, errors.New("OTP_EXPIRES_IN_SEC must be integer")
+		}
+		cfg.OTP.ExpiresIn = time.Duration(n) * time.Second
+	}
 
 	if v := os.Getenv("ADMIN_USERNAME"); v != "" {
 		cfg.Admin.Username = strings.TrimSpace(v)
@@ -185,8 +192,8 @@ func NewConfig() (*Config, error) {
 	if cfg.JWT.AccessTTL != 60*time.Second {
 		return nil, errors.New("access token ttl must be exactly 60 seconds")
 	}
-	if cfg.OTP.ExpiresIn != 60*time.Second {
-		return nil, errors.New("otp expiry must be exactly 60 seconds")
+	if cfg.OTP.ExpiresIn < 3*time.Minute || cfg.OTP.ExpiresIn > 5*time.Minute {
+		return nil, errors.New("otp expiry must be between 180 and 300 seconds")
 	}
 	if cfg.OTP.MaxAttempts <= 0 {
 		return nil, errors.New("OTP_MAX_ATTEMPTS must be > 0")

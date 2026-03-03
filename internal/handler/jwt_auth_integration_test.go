@@ -63,15 +63,42 @@ func TestLocalhostServer_JWTAuth_10Users_Positive(t *testing.T) {
 				t.Fatalf("otp verify status: got %d want 200", verify.StatusCode)
 			}
 			var verifyBody struct {
+				VerificationToken string `json:"verification_token"`
+				Phone             string `json:"phone"`
+			}
+			decodeJSON(t, verify, &verifyBody)
+			if verifyBody.VerificationToken == "" {
+				t.Fatal("expected verification token")
+			}
+
+			register := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/register", map[string]any{
+				"phone":              phone,
+				"password":           "StrongPass123!",
+				"confirm_password":   "StrongPass123!",
+				"verification_token": verifyBody.VerificationToken,
+			})
+			if register.StatusCode != http.StatusCreated {
+				t.Fatalf("register status: got %d want 201", register.StatusCode)
+			}
+			_ = register.Body.Close()
+
+			login := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/login", map[string]any{
+				"phone":    phone,
+				"password": "StrongPass123!",
+			})
+			if login.StatusCode != http.StatusOK {
+				t.Fatalf("login status: got %d want 200", login.StatusCode)
+			}
+			var loginBody struct {
 				AccessToken  string `json:"access_token"`
 				RefreshToken string `json:"refresh_token"`
 			}
-			decodeJSON(t, verify, &verifyBody)
-			if verifyBody.AccessToken == "" || verifyBody.RefreshToken == "" {
+			decodeJSON(t, login, &loginBody)
+			if loginBody.AccessToken == "" || loginBody.RefreshToken == "" {
 				t.Fatal("expected access and refresh tokens")
 			}
 
-			meResp := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/me", nil, verifyBody.AccessToken)
+			meResp := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/me", nil, loginBody.AccessToken)
 			if meResp.StatusCode != http.StatusOK {
 				t.Fatalf("auth me status: got %d want 200", meResp.StatusCode)
 			}
@@ -79,7 +106,7 @@ func TestLocalhostServer_JWTAuth_10Users_Positive(t *testing.T) {
 
 			note1Resp := doReqAuth(t, srv.URL, http.MethodPost, "/api/v1/auth/notes", map[string]any{
 				"note_type": fmt.Sprintf("deadline-%d-1", i),
-			}, verifyBody.AccessToken)
+			}, loginBody.AccessToken)
 			if note1Resp.StatusCode != http.StatusCreated {
 				t.Fatalf("create note1 status: got %d want 201", note1Resp.StatusCode)
 			}
@@ -87,13 +114,13 @@ func TestLocalhostServer_JWTAuth_10Users_Positive(t *testing.T) {
 
 			note2Resp := doReqAuth(t, srv.URL, http.MethodPost, "/api/v1/auth/notes", map[string]any{
 				"note_type": fmt.Sprintf("deadline-%d-2", i),
-			}, verifyBody.AccessToken)
+			}, loginBody.AccessToken)
 			if note2Resp.StatusCode != http.StatusCreated {
 				t.Fatalf("create note2 status: got %d want 201", note2Resp.StatusCode)
 			}
 			_ = note2Resp.Body.Close()
 
-			listResp := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/notes", nil, verifyBody.AccessToken)
+			listResp := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/notes", nil, loginBody.AccessToken)
 			if listResp.StatusCode != http.StatusOK {
 				t.Fatalf("list notes status: got %d want 200", listResp.StatusCode)
 			}
@@ -106,7 +133,7 @@ func TestLocalhostServer_JWTAuth_10Users_Positive(t *testing.T) {
 			}
 
 			refreshResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/refresh", map[string]any{
-				"refresh_token": verifyBody.RefreshToken,
+				"refresh_token": loginBody.RefreshToken,
 			})
 			if refreshResp.StatusCode != http.StatusOK {
 				t.Fatalf("refresh status: got %d want 200", refreshResp.StatusCode)

@@ -81,6 +81,48 @@ func TestLocalhostServer_PhoneOTPAndNotesFlow(t *testing.T) {
 		t.Fatalf("otp verify status: got %d want 200", verifyResp.StatusCode)
 	}
 	var verifyBody struct {
+		VerificationToken string `json:"verification_token"`
+		Phone             string `json:"phone"`
+	}
+	decodeJSON(t, verifyResp, &verifyBody)
+	if verifyBody.VerificationToken == "" {
+		t.Fatal("expected verification token")
+	}
+	if verifyBody.Phone != phone {
+		t.Fatalf("expected phone %q got %q", phone, verifyBody.Phone)
+	}
+
+	registerResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/register", map[string]any{
+		"phone":              phone,
+		"password":           "StrongPass123!",
+		"confirm_password":   "StrongPass123!",
+		"verification_token": verifyBody.VerificationToken,
+	})
+	if registerResp.StatusCode != http.StatusCreated {
+		t.Fatalf("register status: got %d want 201", registerResp.StatusCode)
+	}
+	var registerBody struct {
+		User struct {
+			UserID string `json:"userId"`
+			Phone  string `json:"phone"`
+		} `json:"user"`
+	}
+	decodeJSON(t, registerResp, &registerBody)
+	if registerBody.User.UserID == "" {
+		t.Fatal("expected user id")
+	}
+	if registerBody.User.Phone != phone {
+		t.Fatalf("expected phone %q got %q", phone, registerBody.User.Phone)
+	}
+
+	loginResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/login", map[string]any{
+		"phone":    phone,
+		"password": "StrongPass123!",
+	})
+	if loginResp.StatusCode != http.StatusOK {
+		t.Fatalf("login status: got %d want 200", loginResp.StatusCode)
+	}
+	var loginBody struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		User         struct {
@@ -88,18 +130,15 @@ func TestLocalhostServer_PhoneOTPAndNotesFlow(t *testing.T) {
 			Phone  string `json:"phone"`
 		} `json:"user"`
 	}
-	decodeJSON(t, verifyResp, &verifyBody)
-	if verifyBody.AccessToken == "" || verifyBody.RefreshToken == "" {
+	decodeJSON(t, loginResp, &loginBody)
+	if loginBody.AccessToken == "" || loginBody.RefreshToken == "" {
 		t.Fatal("expected access and refresh tokens")
 	}
-	if verifyBody.User.UserID == "" {
-		t.Fatal("expected user id")
-	}
-	if verifyBody.User.Phone != phone {
-		t.Fatalf("expected phone %q got %q", phone, verifyBody.User.Phone)
+	if loginBody.User.UserID != registerBody.User.UserID {
+		t.Fatalf("expected user id %q got %q", registerBody.User.UserID, loginBody.User.UserID)
 	}
 
-	meClaims := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/me", nil, verifyBody.AccessToken)
+	meClaims := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/me", nil, loginBody.AccessToken)
 	if meClaims.StatusCode != http.StatusOK {
 		t.Fatalf("auth/me status: got %d want 200", meClaims.StatusCode)
 	}
@@ -108,8 +147,8 @@ func TestLocalhostServer_PhoneOTPAndNotesFlow(t *testing.T) {
 		Phone    string `json:"phone"`
 	}
 	decodeJSON(t, meClaims, &meClaimsBody)
-	if meClaimsBody.UserUUID != verifyBody.User.UserID {
-		t.Fatalf("expected user_uuid %q got %q", verifyBody.User.UserID, meClaimsBody.UserUUID)
+	if meClaimsBody.UserUUID != registerBody.User.UserID {
+		t.Fatalf("expected user_uuid %q got %q", registerBody.User.UserID, meClaimsBody.UserUUID)
 	}
 	if meClaimsBody.Phone != phone {
 		t.Fatalf("expected phone %q got %q", phone, meClaimsBody.Phone)
@@ -117,13 +156,13 @@ func TestLocalhostServer_PhoneOTPAndNotesFlow(t *testing.T) {
 
 	authNoteCreate := doReqAuth(t, srv.URL, http.MethodPost, "/api/v1/auth/notes", map[string]any{
 		"note_type": "deadline",
-	}, verifyBody.AccessToken)
+	}, loginBody.AccessToken)
 	if authNoteCreate.StatusCode != http.StatusCreated {
 		t.Fatalf("auth note create status: got %d want 201", authNoteCreate.StatusCode)
 	}
 	_ = authNoteCreate.Body.Close()
 
-	authNoteList := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/notes", nil, verifyBody.AccessToken)
+	authNoteList := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/notes", nil, loginBody.AccessToken)
 	if authNoteList.StatusCode != http.StatusOK {
 		t.Fatalf("auth note list status: got %d want 200", authNoteList.StatusCode)
 	}
@@ -136,7 +175,7 @@ func TestLocalhostServer_PhoneOTPAndNotesFlow(t *testing.T) {
 	}
 
 	refreshResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/refresh", map[string]any{
-		"refresh_token": verifyBody.RefreshToken,
+		"refresh_token": loginBody.RefreshToken,
 	})
 	if refreshResp.StatusCode != http.StatusOK {
 		t.Fatalf("refresh status: got %d want 200", refreshResp.StatusCode)
@@ -158,11 +197,11 @@ func TestLocalhostServer_PhoneOTPAndNotesFlow(t *testing.T) {
 		UserLanguage string `json:"userLanguage"`
 	}
 	decodeJSON(t, meProfile, &meProfileBody)
-	if meProfileBody.UserID != verifyBody.User.UserID {
-		t.Fatalf("expected profile user id %q got %q", verifyBody.User.UserID, meProfileBody.UserID)
+	if meProfileBody.UserID != registerBody.User.UserID {
+		t.Fatalf("expected profile user id %q got %q", registerBody.User.UserID, meProfileBody.UserID)
 	}
 
-	updateLang := doReq(t, srv.URL, http.MethodPut, "/api/v1/users/"+verifyBody.User.UserID+"/language", map[string]any{
+	updateLang := doReq(t, srv.URL, http.MethodPut, "/api/v1/users/"+registerBody.User.UserID+"/language", map[string]any{
 		"userLanguage": "kk",
 	})
 	if updateLang.StatusCode != http.StatusOK {
@@ -170,7 +209,7 @@ func TestLocalhostServer_PhoneOTPAndNotesFlow(t *testing.T) {
 	}
 	_ = updateLang.Body.Close()
 
-	userByID := doReq(t, srv.URL, http.MethodGet, "/api/v1/users/"+verifyBody.User.UserID, nil)
+	userByID := doReq(t, srv.URL, http.MethodGet, "/api/v1/users/"+registerBody.User.UserID, nil)
 	if userByID.StatusCode != http.StatusOK {
 		t.Fatalf("get user status: got %d want 200", userByID.StatusCode)
 	}
@@ -183,7 +222,7 @@ func TestLocalhostServer_PhoneOTPAndNotesFlow(t *testing.T) {
 	}
 
 	legacyCreate := doReq(t, srv.URL, http.MethodPost, "/api/v1/notes", map[string]any{
-		"userId":    verifyBody.User.UserID,
+		"userId":    registerBody.User.UserID,
 		"note_type": "reminder",
 	})
 	if legacyCreate.StatusCode != http.StatusCreated {
@@ -191,7 +230,7 @@ func TestLocalhostServer_PhoneOTPAndNotesFlow(t *testing.T) {
 	}
 	_ = legacyCreate.Body.Close()
 
-	legacyList := doReq(t, srv.URL, http.MethodGet, "/api/v1/users/"+verifyBody.User.UserID+"/notes", nil)
+	legacyList := doReq(t, srv.URL, http.MethodGet, "/api/v1/users/"+registerBody.User.UserID+"/notes", nil)
 	if legacyList.StatusCode != http.StatusOK {
 		t.Fatalf("legacy note list status: got %d want 200", legacyList.StatusCode)
 	}
@@ -202,6 +241,209 @@ func TestLocalhostServer_PhoneOTPAndNotesFlow(t *testing.T) {
 	if legacyListBody.Total < 2 {
 		t.Fatalf("expected at least 2 total notes, got %d", legacyListBody.Total)
 	}
+}
+
+func TestLocalhostServer_RegisterVerificationTokenSingleUse(t *testing.T) {
+	srv := newLocalTestServerWithTestingEndpoints(t, true)
+	defer srv.Close()
+
+	phone := "+77017778899"
+
+	adminLogin := doReq(t, srv.URL, http.MethodPost, "/api/v1/admin/auth/login", map[string]any{
+		"username": "Admin",
+		"password": "QRT123",
+	})
+	if adminLogin.StatusCode != http.StatusOK {
+		t.Fatalf("admin login status: got %d want 200", adminLogin.StatusCode)
+	}
+	var adminBody struct {
+		AccessToken string `json:"access_token"`
+	}
+	decodeJSON(t, adminLogin, &adminBody)
+
+	otpReqResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/otp/request", map[string]any{
+		"phone": phone,
+	})
+	if otpReqResp.StatusCode != http.StatusOK {
+		t.Fatalf("otp request status: got %d want 200", otpReqResp.StatusCode)
+	}
+	var otpReqBody struct {
+		RequestID string `json:"request_id"`
+	}
+	decodeJSON(t, otpReqResp, &otpReqBody)
+
+	otpCodeResp := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/admin/testing/otp/latest?phone="+url.QueryEscape(phone), nil, adminBody.AccessToken)
+	if otpCodeResp.StatusCode != http.StatusOK {
+		t.Fatalf("latest otp status: got %d want 200", otpCodeResp.StatusCode)
+	}
+	codeRaw, err := io.ReadAll(otpCodeResp.Body)
+	if err != nil {
+		t.Fatalf("read otp code: %v", err)
+	}
+	_ = otpCodeResp.Body.Close()
+
+	verifyResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/otp/verify", map[string]any{
+		"request_id": otpReqBody.RequestID,
+		"code":       strings.TrimSpace(string(codeRaw)),
+	})
+	if verifyResp.StatusCode != http.StatusOK {
+		t.Fatalf("otp verify status: got %d want 200", verifyResp.StatusCode)
+	}
+	var verifyBody struct {
+		VerificationToken string `json:"verification_token"`
+	}
+	decodeJSON(t, verifyResp, &verifyBody)
+
+	registerPayload := map[string]any{
+		"phone":              phone,
+		"password":           "StrongPass123!",
+		"confirm_password":   "StrongPass123!",
+		"verification_token": verifyBody.VerificationToken,
+	}
+
+	firstRegisterResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/register", registerPayload)
+	if firstRegisterResp.StatusCode != http.StatusCreated {
+		t.Fatalf("first register status: got %d want 201", firstRegisterResp.StatusCode)
+	}
+	_ = firstRegisterResp.Body.Close()
+
+	secondRegisterResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/register", registerPayload)
+	if secondRegisterResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("second register status: got %d want 400", secondRegisterResp.StatusCode)
+	}
+	_ = secondRegisterResp.Body.Close()
+}
+
+func TestLocalhostServer_PasswordResetFlow(t *testing.T) {
+	srv := newLocalTestServerWithTestingEndpoints(t, true)
+	defer srv.Close()
+
+	phone := "+77018889900"
+	initialPassword := "StartPass123!"
+	newPassword := "NextPass123!"
+
+	adminLogin := doReq(t, srv.URL, http.MethodPost, "/api/v1/admin/auth/login", map[string]any{
+		"username": "Admin",
+		"password": "QRT123",
+	})
+	if adminLogin.StatusCode != http.StatusOK {
+		t.Fatalf("admin login status: got %d want 200", adminLogin.StatusCode)
+	}
+	var adminBody struct {
+		AccessToken string `json:"access_token"`
+	}
+	decodeJSON(t, adminLogin, &adminBody)
+
+	registerOTPReq := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/otp/request", map[string]any{
+		"phone": phone,
+	})
+	if registerOTPReq.StatusCode != http.StatusOK {
+		t.Fatalf("register otp request status: got %d want 200", registerOTPReq.StatusCode)
+	}
+	var registerOTPReqBody struct {
+		RequestID string `json:"request_id"`
+	}
+	decodeJSON(t, registerOTPReq, &registerOTPReqBody)
+
+	registerOTPCodeResp := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/admin/testing/otp/latest?phone="+url.QueryEscape(phone), nil, adminBody.AccessToken)
+	if registerOTPCodeResp.StatusCode != http.StatusOK {
+		t.Fatalf("register latest otp status: got %d want 200", registerOTPCodeResp.StatusCode)
+	}
+	registerCodeRaw, err := io.ReadAll(registerOTPCodeResp.Body)
+	if err != nil {
+		t.Fatalf("read register otp: %v", err)
+	}
+	_ = registerOTPCodeResp.Body.Close()
+
+	registerVerifyResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/otp/verify", map[string]any{
+		"request_id": registerOTPReqBody.RequestID,
+		"code":       strings.TrimSpace(string(registerCodeRaw)),
+	})
+	if registerVerifyResp.StatusCode != http.StatusOK {
+		t.Fatalf("register otp verify status: got %d want 200", registerVerifyResp.StatusCode)
+	}
+	var registerVerifyBody struct {
+		VerificationToken string `json:"verification_token"`
+	}
+	decodeJSON(t, registerVerifyResp, &registerVerifyBody)
+
+	registerResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/register", map[string]any{
+		"phone":              phone,
+		"password":           initialPassword,
+		"confirm_password":   initialPassword,
+		"verification_token": registerVerifyBody.VerificationToken,
+	})
+	if registerResp.StatusCode != http.StatusCreated {
+		t.Fatalf("register status: got %d want 201", registerResp.StatusCode)
+	}
+	_ = registerResp.Body.Close()
+
+	time.Sleep(1100 * time.Millisecond)
+
+	resetOTPReq := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/password-reset/otp/request", map[string]any{
+		"phone": phone,
+	})
+	if resetOTPReq.StatusCode != http.StatusOK {
+		t.Fatalf("reset otp request status: got %d want 200", resetOTPReq.StatusCode)
+	}
+	var resetOTPReqBody struct {
+		RequestID string `json:"request_id"`
+	}
+	decodeJSON(t, resetOTPReq, &resetOTPReqBody)
+
+	resetOTPCodeResp := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/admin/testing/otp/latest?phone="+url.QueryEscape(phone), nil, adminBody.AccessToken)
+	if resetOTPCodeResp.StatusCode != http.StatusOK {
+		t.Fatalf("reset latest otp status: got %d want 200", resetOTPCodeResp.StatusCode)
+	}
+	resetCodeRaw, err := io.ReadAll(resetOTPCodeResp.Body)
+	if err != nil {
+		t.Fatalf("read reset otp: %v", err)
+	}
+	_ = resetOTPCodeResp.Body.Close()
+
+	resetVerifyResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/password-reset/otp/verify", map[string]any{
+		"request_id": resetOTPReqBody.RequestID,
+		"code":       strings.TrimSpace(string(resetCodeRaw)),
+	})
+	if resetVerifyResp.StatusCode != http.StatusOK {
+		t.Fatalf("reset otp verify status: got %d want 200", resetVerifyResp.StatusCode)
+	}
+	var resetVerifyBody struct {
+		VerificationToken string `json:"verification_token"`
+	}
+	decodeJSON(t, resetVerifyResp, &resetVerifyBody)
+	if resetVerifyBody.VerificationToken == "" {
+		t.Fatal("expected reset verification token")
+	}
+
+	confirmResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/password-reset/confirm", map[string]any{
+		"phone":              phone,
+		"new_password":       newPassword,
+		"confirm_password":   newPassword,
+		"verification_token": resetVerifyBody.VerificationToken,
+	})
+	if confirmResp.StatusCode != http.StatusOK {
+		t.Fatalf("reset confirm status: got %d want 200", confirmResp.StatusCode)
+	}
+	_ = confirmResp.Body.Close()
+
+	oldLoginResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/login", map[string]any{
+		"phone":    phone,
+		"password": initialPassword,
+	})
+	if oldLoginResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("old password login status: got %d want 401", oldLoginResp.StatusCode)
+	}
+	_ = oldLoginResp.Body.Close()
+
+	newLoginResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/login", map[string]any{
+		"phone":    phone,
+		"password": newPassword,
+	})
+	if newLoginResp.StatusCode != http.StatusOK {
+		t.Fatalf("new password login status: got %d want 200", newLoginResp.StatusCode)
+	}
+	_ = newLoginResp.Body.Close()
 }
 
 func TestLocalhostServer_CORSPreflight(t *testing.T) {
@@ -273,8 +515,14 @@ func TestLocalhostServer_SwaggerSpec_PhoneOnlyAuth(t *testing.T) {
 	if _, ok := paths["/api/v1/auth/otp/request"]; !ok {
 		t.Fatal("swagger spec missing /api/v1/auth/otp/request")
 	}
-	if _, ok := paths["/api/v1/auth/login"]; ok {
-		t.Fatal("swagger must not expose /api/v1/auth/login")
+	if _, ok := paths["/api/v1/auth/login"]; !ok {
+		t.Fatal("swagger spec missing /api/v1/auth/login")
+	}
+	if _, ok := paths["/api/v1/auth/register"]; !ok {
+		t.Fatal("swagger spec missing /api/v1/auth/register")
+	}
+	if _, ok := paths["/api/v1/auth/password-reset/otp/request"]; !ok {
+		t.Fatal("swagger spec missing /api/v1/auth/password-reset/otp/request")
 	}
 	if _, ok := paths["/api/v1/users/login"]; ok {
 		t.Fatal("swagger must not expose /api/v1/users/login")
@@ -353,7 +601,7 @@ func newLocalTestServerWithTestingEndpoints(t *testing.T, enableTestingEndpoints
 			RequestCooldown: 1 * time.Second,
 			MaxAttempts:     5,
 			LockDuration:    2 * time.Minute,
-			ExpiresIn:       60 * time.Second,
+			ExpiresIn:       5 * time.Minute,
 		},
 		Admin: config.AdminConfig{
 			Username: "Admin",

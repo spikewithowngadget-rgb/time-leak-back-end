@@ -118,10 +118,10 @@ func NewOTPService(repo OTPRepository, otpCfg config.OTPConfig, log *zap.Logger)
 
 	expiresIn := otpCfg.ExpiresIn
 	if expiresIn <= 0 {
-		expiresIn = 60 * time.Second
+		expiresIn = 5 * time.Minute
 	}
-	if expiresIn != 60*time.Second {
-		expiresIn = 60 * time.Second
+	if expiresIn < 3*time.Minute || expiresIn > 5*time.Minute {
+		expiresIn = 5 * time.Minute
 	}
 
 	secret := strings.TrimSpace(otpCfg.HMACSecret)
@@ -326,14 +326,8 @@ func validateOTPDestination(channel domain.OTPChannel, destination string) error
 	}
 	switch channel {
 	case domain.OTPChannelWhatsApp:
-		digits := strings.TrimPrefix(destination, "+")
-		if len(digits) < 6 {
+		if !phoneE164Pattern.MatchString(destination) {
 			return ErrInvalidOTPDestination
-		}
-		for _, r := range digits {
-			if r < '0' || r > '9' {
-				return ErrInvalidOTPDestination
-			}
 		}
 		return nil
 	default:

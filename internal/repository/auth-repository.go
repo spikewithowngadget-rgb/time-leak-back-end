@@ -200,6 +200,28 @@ func (r *Repository) UpdateUserPhone(ctx context.Context, userID, phone string) 
 	return ensureRowsAffected(res)
 }
 
+func (r *Repository) UpdateUserPasswordByPhone(ctx context.Context, phone, passwordHash string) error {
+	phone = normalizePhone(phone)
+	passwordHash = strings.TrimSpace(passwordHash)
+	if phone == "" {
+		return errors.New("phone is empty")
+	}
+	if passwordHash == "" {
+		return errors.New("password hash is empty")
+	}
+
+	res, err := r.db.ExecContext(
+		ctx,
+		`UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+		passwordHash,
+		phone,
+	)
+	if err != nil {
+		return fmt.Errorf("update user password by phone: %w", err)
+	}
+	return ensureRowsAffected(res)
+}
+
 func (r *Repository) CreateNote(ctx context.Context, userID, noteType string) (domain.Note, error) {
 	noteType = strings.TrimSpace(noteType)
 	if userID == "" {
@@ -597,6 +619,97 @@ func (r *Repository) ResetOTPLockState(ctx context.Context, channel domain.OTPCh
 	return nil
 }
 
+func (r *Repository) CreateAuthVerification(
+	ctx context.Context,
+	verificationID string,
+	requestID string,
+	purpose domain.AuthVerificationPurpose,
+	phone string,
+	expiresAt time.Time,
+) (domain.AuthVerification, error) {
+	verificationID = strings.TrimSpace(verificationID)
+	if verificationID == "" {
+		verificationID = dbtraits.GenerateUUID()
+	}
+	requestID = strings.TrimSpace(requestID)
+	phone = normalizePhone(phone)
+	purposeRaw := normalizeVerificationPurpose(purpose)
+	if requestID == "" {
+		return domain.AuthVerification{}, errors.New("request id is empty")
+	}
+	if phone == "" {
+		return domain.AuthVerification{}, errors.New("phone is empty")
+	}
+	if purposeRaw == "" {
+		return domain.AuthVerification{}, errors.New("verification purpose is empty")
+	}
+
+	_, err := r.db.ExecContext(
+		ctx,
+		`INSERT INTO auth_verifications (id, request_id, purpose, phone, expires_at) VALUES (?, ?, ?, ?, ?)`,
+		verificationID,
+		requestID,
+		purposeRaw,
+		phone,
+		expiresAt.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return domain.AuthVerification{}, fmt.Errorf("insert auth verification: %w", err)
+	}
+
+	return r.GetAuthVerificationByID(ctx, verificationID)
+}
+
+func (r *Repository) GetAuthVerificationByID(ctx context.Context, verificationID string) (domain.AuthVerification, error) {
+	row := r.db.QueryRowContext(
+		ctx,
+		`SELECT id, request_id, purpose, phone, expires_at, used_at, created_at
+		 FROM auth_verifications
+		 WHERE id = ?`,
+		strings.TrimSpace(verificationID),
+	)
+
+	var out domain.AuthVerification
+	var purposeRaw string
+	var expiresAt string
+	var usedAt sql.NullString
+	var createdAt string
+	if err := row.Scan(
+		&out.ID,
+		&out.RequestID,
+		&purposeRaw,
+		&out.Phone,
+		&expiresAt,
+		&usedAt,
+		&createdAt,
+	); err != nil {
+		return domain.AuthVerification{}, err
+	}
+
+	out.Purpose = domain.AuthVerificationPurpose(normalizeVerificationPurpose(domain.AuthVerificationPurpose(purposeRaw)))
+	out.Phone = normalizePhone(out.Phone)
+	out.ExpiresAt = parseSQLiteTime(expiresAt)
+	out.CreatedAt = parseSQLiteTime(createdAt)
+	if usedAt.Valid {
+		t := parseSQLiteTime(usedAt.String)
+		out.UsedAt = &t
+	}
+	return out, nil
+}
+
+func (r *Repository) MarkAuthVerificationUsed(ctx context.Context, verificationID string, usedAt time.Time) error {
+	res, err := r.db.ExecContext(
+		ctx,
+		`UPDATE auth_verifications SET used_at = ? WHERE id = ? AND used_at IS NULL`,
+		usedAt.UTC().Format(time.RFC3339Nano),
+		strings.TrimSpace(verificationID),
+	)
+	if err != nil {
+		return fmt.Errorf("mark auth verification used: %w", err)
+	}
+	return ensureRowsAffected(res)
+}
+
 func (r *Repository) CreateAd(ctx context.Context, in domain.AdCreateInput) (domain.Ad, error) {
 	id := dbtraits.GenerateUUID()
 	_, err := r.db.ExecContext(
@@ -787,6 +900,17 @@ func normalizeDestination(channel domain.OTPChannel, destination string) string 
 		return normalizePhone(destination)
 	default:
 		return strings.TrimSpace(destination)
+	}
+}
+
+func normalizeVerificationPurpose(purpose domain.AuthVerificationPurpose) string {
+	switch strings.TrimSpace(strings.ToLower(string(purpose))) {
+	case string(domain.AuthVerificationPurposeRegistration):
+		return string(domain.AuthVerificationPurposeRegistration)
+	case string(domain.AuthVerificationPurposePasswordReset):
+		return string(domain.AuthVerificationPurposePasswordReset)
+	default:
+		return ""
 	}
 }
 

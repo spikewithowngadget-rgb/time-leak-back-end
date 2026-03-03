@@ -46,6 +46,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("POST /api/v1/auth/otp/request", h.AuthOTPRequest)
 	mux.HandleFunc("POST /api/v1/auth/otp/verify", h.AuthOTPVerify)
+	mux.HandleFunc("POST /api/v1/auth/register", h.AuthRegisterComplete)
+	mux.HandleFunc("POST /api/v1/auth/login", h.AuthLogin)
+	mux.HandleFunc("POST /api/v1/auth/password-reset/otp/request", h.AuthPasswordResetOTPRequest)
+	mux.HandleFunc("POST /api/v1/auth/password-reset/otp/verify", h.AuthPasswordResetOTPVerify)
+	mux.HandleFunc("POST /api/v1/auth/password-reset/confirm", h.AuthPasswordResetConfirm)
 	mux.HandleFunc("POST /api/v1/auth/refresh", h.AuthRefresh)
 	mux.HandleFunc("GET /api/v1/auth/me", h.AuthMe)
 	mux.HandleFunc("POST /api/v1/auth/notes", h.AuthCreateNote)
@@ -95,6 +100,25 @@ type otpVerifyReq struct {
 	Code      string `json:"code"`
 }
 
+type authRegisterCompleteReq struct {
+	Phone             string `json:"phone"`
+	Password          string `json:"password"`
+	ConfirmPassword   string `json:"confirm_password"`
+	VerificationToken string `json:"verification_token"`
+}
+
+type authLoginReq struct {
+	Phone    string `json:"phone"`
+	Password string `json:"password"`
+}
+
+type authResetPasswordConfirmReq struct {
+	Phone             string `json:"phone"`
+	NewPassword       string `json:"new_password"`
+	ConfirmPassword   string `json:"confirm_password"`
+	VerificationToken string `json:"verification_token"`
+}
+
 type adminLoginReq struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -134,6 +158,7 @@ func (h *Handler) AuthOTPRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// TODO: integrate WhatsApp provider dispatch here (demo mode only for now).
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -160,29 +185,183 @@ func (h *Handler) AuthOTPVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.app.ResolveUserByPhoneOTP(r.Context(), verifyResult.Destination)
+	verification, err := h.app.CreateAuthVerification(
+		r.Context(),
+		domain.AuthVerificationPurposeRegistration,
+		req.RequestID,
+		verifyResult.Destination,
+	)
 	if err != nil {
 		switch {
-		case errors.Is(err, service.ErrPhoneRequired):
-			writeErrorJSON(w, http.StatusBadRequest, "phone is required")
+		case isAuthValidationError(err):
+			writeErrorJSON(w, http.StatusBadRequest, "otp verification failed")
 		default:
 			writeErrorJSON(w, http.StatusInternalServerError, "internal")
 		}
 		return
 	}
 
-	pair, err := h.jwt.IssueUserTokens(r.Context(), user, "otp_whatsapp")
+	writeJSON(w, http.StatusOK, verification)
+}
+
+func (h *Handler) AuthRegisterComplete(w http.ResponseWriter, r *http.Request) {
+	var req authRegisterCompleteReq
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "bad request")
+		return
+	}
+
+	user, err := h.app.RegisterWithPhoneOTP(
+		r.Context(),
+		req.Phone,
+		req.Password,
+		req.ConfirmPassword,
+		req.VerificationToken,
+	)
+	if err != nil {
+		switch {
+		case isAuthValidationError(err), isVerificationError(err):
+			writeErrorJSON(w, http.StatusBadRequest, "registration failed")
+		case errors.Is(err, service.ErrUserAlreadyExists):
+			writeErrorJSON(w, http.StatusConflict, "user already exists")
+		default:
+			writeErrorJSON(w, http.StatusInternalServerError, "internal")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"status": "registered",
+		"user":   user,
+	})
+}
+
+func (h *Handler) AuthLogin(w http.ResponseWriter, r *http.Request) {
+	var req authLoginReq
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "bad request")
+		return
+	}
+
+	user, err := h.app.LoginByPhonePassword(r.Context(), req.Phone, req.Password)
+	if err != nil {
+		switch {
+		case isAuthValidationError(err):
+			writeErrorJSON(w, http.StatusBadRequest, "invalid login payload")
+		case errors.Is(err, service.ErrInvalidCredentials):
+			writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		default:
+			writeErrorJSON(w, http.StatusInternalServerError, "internal")
+		}
+		return
+	}
+
+	pair, err := h.jwt.IssueUserTokens(r.Context(), user, "password")
 	if err != nil {
 		writeErrorJSON(w, http.StatusInternalServerError, "internal")
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
+		"user":               user,
 		"access_token":       pair.AccessToken,
 		"refresh_token":      pair.RefreshToken,
 		"expires_in_seconds": h.jwt.AccessTTLSeconds(),
-		"user":               user,
 	})
+}
+
+func (h *Handler) AuthPasswordResetOTPRequest(w http.ResponseWriter, r *http.Request) {
+	var req otpRequestReq
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "bad request")
+		return
+	}
+
+	result, err := h.otp.RequestOTP(r.Context(), domain.OTPChannelWhatsApp, req.Phone)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidOTPDestination):
+			writeErrorJSON(w, http.StatusBadRequest, "invalid otp request")
+		case errors.Is(err, service.ErrOTPTooManyRequests), errors.Is(err, service.ErrOTPLocked):
+			writeErrorJSON(w, http.StatusTooManyRequests, "otp temporarily unavailable")
+		default:
+			writeErrorJSON(w, http.StatusInternalServerError, "internal")
+		}
+		return
+	}
+
+	// TODO: integrate WhatsApp provider dispatch here (demo mode only for now).
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) AuthPasswordResetOTPVerify(w http.ResponseWriter, r *http.Request) {
+	var req otpVerifyReq
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "bad request")
+		return
+	}
+
+	verifyResult, err := h.otp.VerifyOTP(r.Context(), req.RequestID, req.Code)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrOTPRequestNotFound),
+			errors.Is(err, service.ErrOTPExpired),
+			errors.Is(err, service.ErrOTPAlreadyUsed),
+			errors.Is(err, service.ErrOTPInvalidCode):
+			writeErrorJSON(w, http.StatusBadRequest, "otp verification failed")
+		case errors.Is(err, service.ErrOTPTooManyAttempts), errors.Is(err, service.ErrOTPLocked):
+			writeErrorJSON(w, http.StatusTooManyRequests, "otp temporarily locked")
+		default:
+			writeErrorJSON(w, http.StatusInternalServerError, "internal")
+		}
+		return
+	}
+
+	verification, err := h.app.CreateAuthVerification(
+		r.Context(),
+		domain.AuthVerificationPurposePasswordReset,
+		req.RequestID,
+		verifyResult.Destination,
+	)
+	if err != nil {
+		switch {
+		case isAuthValidationError(err):
+			writeErrorJSON(w, http.StatusBadRequest, "otp verification failed")
+		default:
+			writeErrorJSON(w, http.StatusInternalServerError, "internal")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, verification)
+}
+
+func (h *Handler) AuthPasswordResetConfirm(w http.ResponseWriter, r *http.Request) {
+	var req authResetPasswordConfirmReq
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "bad request")
+		return
+	}
+
+	if err := h.app.ResetPasswordWithOTP(
+		r.Context(),
+		req.Phone,
+		req.NewPassword,
+		req.ConfirmPassword,
+		req.VerificationToken,
+	); err != nil {
+		switch {
+		case isAuthValidationError(err), isVerificationError(err):
+			writeErrorJSON(w, http.StatusBadRequest, "password reset failed")
+		case errors.Is(err, service.ErrUserNotFound):
+			writeErrorJSON(w, http.StatusNotFound, "user not found")
+		default:
+			writeErrorJSON(w, http.StatusInternalServerError, "internal")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "password_updated"})
 }
 
 func (h *Handler) AuthRefresh(w http.ResponseWriter, r *http.Request) {
@@ -622,6 +801,22 @@ func (h *Handler) adminClaimsFromRequest(w http.ResponseWriter, r *http.Request)
 	}
 
 	return claims, true
+}
+
+func isAuthValidationError(err error) bool {
+	return errors.Is(err, service.ErrPhoneRequired) ||
+		errors.Is(err, service.ErrInvalidPhoneFormat) ||
+		errors.Is(err, service.ErrPasswordRequired) ||
+		errors.Is(err, service.ErrPasswordMismatch) ||
+		errors.Is(err, service.ErrPasswordTooShort)
+}
+
+func isVerificationError(err error) bool {
+	return errors.Is(err, service.ErrVerificationTokenMissing) ||
+		errors.Is(err, service.ErrVerificationNotFound) ||
+		errors.Is(err, service.ErrVerificationExpired) ||
+		errors.Is(err, service.ErrVerificationAlreadyUsed) ||
+		errors.Is(err, service.ErrVerificationInvalid)
 }
 
 func bearerToken(hdr string) string {

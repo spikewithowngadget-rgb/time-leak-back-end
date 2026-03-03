@@ -63,7 +63,7 @@ const swaggerSpec = `{
     },
     "/api/v1/auth/otp/verify": {
       "post": {
-        "summary": "Verify WhatsApp OTP and issue token pair",
+        "summary": "Verify registration OTP and return verification token",
         "requestBody": {
           "required": true,
           "content": {
@@ -83,6 +83,122 @@ const swaggerSpec = `{
           },
           "400": { "description": "Invalid OTP payload or code" },
           "429": { "description": "Too many attempts" }
+        }
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "summary": "Complete registration with verified OTP token and password",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RegisterRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Registered",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RegisterResponse" }
+              }
+            }
+          },
+          "400": { "description": "Invalid payload or verification token" },
+          "409": { "description": "User already exists" }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "summary": "Login by phone and password",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/LoginRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authenticated",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/LoginResponse" }
+              }
+            }
+          },
+          "400": { "description": "Invalid payload" },
+          "401": { "description": "Invalid credentials" }
+        }
+      }
+    },
+    "/api/v1/auth/password-reset/otp/request": {
+      "post": {
+        "summary": "Request OTP for password reset",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/OTPRequestInput" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OTP requested",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OTPRequestResponse" }
+              }
+            }
+          },
+          "429": { "description": "Rate limited or temporarily locked" }
+        }
+      }
+    },
+    "/api/v1/auth/password-reset/otp/verify": {
+      "post": {
+        "summary": "Verify password reset OTP and return verification token",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/OTPVerifyInput" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OTP verified",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OTPVerifyResponse" }
+              }
+            }
+          },
+          "400": { "description": "Invalid OTP payload or code" },
+          "429": { "description": "Too many attempts" }
+        }
+      }
+    },
+    "/api/v1/auth/password-reset/confirm": {
+      "post": {
+        "summary": "Set new password after password reset OTP verification",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PasswordResetConfirmRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Password updated" },
+          "400": { "description": "Invalid payload or verification token" }
         }
       }
     },
@@ -429,7 +545,7 @@ const swaggerSpec = `{
         "type": "object",
         "properties": {
           "request_id": { "type": "string" },
-          "expires_in_seconds": { "type": "integer", "example": 60 }
+          "expires_in_seconds": { "type": "integer", "example": 300 }
         }
       },
       "OTPVerifyInput": {
@@ -443,10 +559,53 @@ const swaggerSpec = `{
       "OTPVerifyResponse": {
         "type": "object",
         "properties": {
+          "verification_token": { "type": "string" },
+          "phone": { "type": "string", "example": "+77015556677" },
+          "expires_in_seconds": { "type": "integer", "example": 300 }
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": ["phone", "password", "confirm_password", "verification_token"],
+        "properties": {
+          "phone": { "type": "string", "example": "+77015556677" },
+          "password": { "type": "string", "example": "StrongPass123!" },
+          "confirm_password": { "type": "string", "example": "StrongPass123!" },
+          "verification_token": { "type": "string" }
+        }
+      },
+      "RegisterResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "example": "registered" },
+          "user": { "$ref": "#/components/schemas/User" }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": ["phone", "password"],
+        "properties": {
+          "phone": { "type": "string", "example": "+77015556677" },
+          "password": { "type": "string", "example": "StrongPass123!" }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "properties": {
+          "user": { "$ref": "#/components/schemas/User" },
           "access_token": { "type": "string" },
           "refresh_token": { "type": "string" },
-          "expires_in_seconds": { "type": "integer", "example": 60 },
-          "user": { "$ref": "#/components/schemas/User" }
+          "expires_in_seconds": { "type": "integer", "example": 60 }
+        }
+      },
+      "PasswordResetConfirmRequest": {
+        "type": "object",
+        "required": ["phone", "new_password", "confirm_password", "verification_token"],
+        "properties": {
+          "phone": { "type": "string", "example": "+77015556677" },
+          "new_password": { "type": "string", "example": "NewPass123!" },
+          "confirm_password": { "type": "string", "example": "NewPass123!" },
+          "verification_token": { "type": "string" }
         }
       },
       "TokenPayload": {

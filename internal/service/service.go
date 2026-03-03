@@ -14,7 +14,27 @@ type IUserNotesService interface {
 	UpdateUserLanguage(ctx context.Context, userID, userLanguage string) error
 	CreateNote(ctx context.Context, userID, noteType string) (domain.Note, error)
 	ListNotes(ctx context.Context, userID string) ([]domain.Note, error)
-	ResolveUserByPhoneOTP(ctx context.Context, phone string) (domain.User, error)
+	CreateAuthVerification(
+		ctx context.Context,
+		purpose domain.AuthVerificationPurpose,
+		requestID string,
+		phone string,
+	) (AuthVerificationToken, error)
+	RegisterWithPhoneOTP(
+		ctx context.Context,
+		phone string,
+		password string,
+		confirmPassword string,
+		verificationToken string,
+	) (domain.User, error)
+	LoginByPhonePassword(ctx context.Context, phone, password string) (domain.User, error)
+	ResetPasswordWithOTP(
+		ctx context.Context,
+		phone string,
+		newPassword string,
+		confirmPassword string,
+		verificationToken string,
+	) error
 }
 
 type IJWTService interface {
@@ -64,7 +84,7 @@ func NewServices(
 		log = zap.NewNop()
 	}
 
-	appService := NewAppService(repositories.Auth, log)
+	appService := NewAppService(repositories.Auth, appConfig.OTP.ExpiresIn, log)
 	jwtService := NewAuthService(appConfig.JWT, repositories.Auth, log)
 	otpService := NewOTPService(repositories.Auth, appConfig.OTP, log)
 	adsService := NewAdsService(repositories.Auth, log)
