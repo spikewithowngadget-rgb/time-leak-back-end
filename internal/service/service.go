@@ -11,6 +11,7 @@ import (
 
 type IUserNotesService interface {
 	GetUser(ctx context.Context, userID string) (domain.User, error)
+	GetUserByPhone(ctx context.Context, phone string) (domain.User, error)
 	UpdateUserLanguage(ctx context.Context, userID, userLanguage string) error
 	CreateNote(ctx context.Context, userID, noteType string, noteFiles []string) (domain.Note, error)
 	GetNote(ctx context.Context, noteID, userID string) (domain.Note, error)
@@ -42,6 +43,7 @@ type IUserNotesService interface {
 
 type IJWTService interface {
 	IssueUserTokens(ctx context.Context, user domain.User, authType string) (TokenPair, error)
+	IssueTestingUserAccessToken(user domain.User, authType string) (string, error)
 	IssueAdminToken(username string) (AdminToken, error)
 	VerifyAccess(accessToken string) (*AccessClaims, error)
 	VerifyUserAccess(accessToken string) (*AccessClaims, error)

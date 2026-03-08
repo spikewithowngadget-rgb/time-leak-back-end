@@ -598,6 +598,121 @@ func TestLocalhostServer_AdminLatestOTP_NoTokenRequired(t *testing.T) {
 	_ = withoutToken.Body.Close()
 }
 
+func TestLocalhostServer_TestingAccessTokenByPhone(t *testing.T) {
+	srv := newLocalTestServerWithTestingEndpoints(t, true)
+	defer srv.Close()
+
+	phone := "+77019990011"
+
+	otpReqResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/otp/request", map[string]any{
+		"phone": phone,
+	})
+	if otpReqResp.StatusCode != http.StatusOK {
+		t.Fatalf("otp request status: got %d want 200", otpReqResp.StatusCode)
+	}
+	var otpReqBody struct {
+		RequestID string `json:"request_id"`
+	}
+	decodeJSON(t, otpReqResp, &otpReqBody)
+
+	otpCodeResp := doReq(t, srv.URL, http.MethodGet, "/api/v1/admin/testing/otp/latest?phone="+url.QueryEscape(phone), nil)
+	if otpCodeResp.StatusCode != http.StatusOK {
+		t.Fatalf("latest otp status: got %d want 200", otpCodeResp.StatusCode)
+	}
+	codeRaw, err := io.ReadAll(otpCodeResp.Body)
+	if err != nil {
+		t.Fatalf("read otp code: %v", err)
+	}
+	_ = otpCodeResp.Body.Close()
+
+	verifyResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/otp/verify", map[string]any{
+		"request_id": otpReqBody.RequestID,
+		"code":       strings.TrimSpace(string(codeRaw)),
+	})
+	if verifyResp.StatusCode != http.StatusOK {
+		t.Fatalf("otp verify status: got %d want 200", verifyResp.StatusCode)
+	}
+	var verifyBody struct {
+		VerificationToken string `json:"verification_token"`
+	}
+	decodeJSON(t, verifyResp, &verifyBody)
+
+	registerResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/register", map[string]any{
+		"phone":              phone,
+		"password":           "StrongPass123!",
+		"confirm_password":   "StrongPass123!",
+		"verification_token": verifyBody.VerificationToken,
+	})
+	if registerResp.StatusCode != http.StatusCreated {
+		t.Fatalf("register status: got %d want 201", registerResp.StatusCode)
+	}
+	var registerBody struct {
+		User struct {
+			UserID string `json:"userId"`
+		} `json:"user"`
+	}
+	decodeJSON(t, registerResp, &registerBody)
+
+	devTokenResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/admin/testing/auth/access-token", map[string]any{
+		"phone": phone,
+	})
+	if devTokenResp.StatusCode != http.StatusOK {
+		t.Fatalf("dev token status: got %d want 200", devTokenResp.StatusCode)
+	}
+	var devTokenBody struct {
+		AccessToken string `json:"access_token"`
+		UserID      string `json:"userId"`
+		Phone       string `json:"phone"`
+		AuthType    string `json:"auth_type"`
+	}
+	decodeJSON(t, devTokenResp, &devTokenBody)
+	if devTokenBody.AccessToken == "" {
+		t.Fatal("expected dev access token")
+	}
+	if devTokenBody.UserID != registerBody.User.UserID {
+		t.Fatalf("expected userId %q got %q", registerBody.User.UserID, devTokenBody.UserID)
+	}
+	if devTokenBody.Phone != phone {
+		t.Fatalf("expected phone %q got %q", phone, devTokenBody.Phone)
+	}
+	if devTokenBody.AuthType != "testing_phone_forever" {
+		t.Fatalf("expected auth_type testing_phone_forever got %q", devTokenBody.AuthType)
+	}
+
+	meResp := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/me", nil, devTokenBody.AccessToken)
+	if meResp.StatusCode != http.StatusOK {
+		t.Fatalf("auth me with dev token status: got %d want 200", meResp.StatusCode)
+	}
+	var meBody struct {
+		UserUUID string `json:"user_uuid"`
+		Phone    string `json:"phone"`
+		AuthType string `json:"auth_type"`
+	}
+	decodeJSON(t, meResp, &meBody)
+	if meBody.UserUUID != registerBody.User.UserID {
+		t.Fatalf("expected user_uuid %q got %q", registerBody.User.UserID, meBody.UserUUID)
+	}
+	if meBody.Phone != phone {
+		t.Fatalf("expected phone %q got %q", phone, meBody.Phone)
+	}
+	if meBody.AuthType != "testing_phone_forever" {
+		t.Fatalf("expected auth_type testing_phone_forever got %q", meBody.AuthType)
+	}
+}
+
+func TestLocalhostServer_TestingAccessToken_Disabled(t *testing.T) {
+	srv := newLocalTestServer(t)
+	defer srv.Close()
+
+	resp := doReq(t, srv.URL, http.MethodPost, "/api/v1/admin/testing/auth/access-token", map[string]any{
+		"phone": "+77019990011",
+	})
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status: got %d want 404", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+}
+
 func TestLocalhostServer_SwaggerSpec_PhoneOnlyAuth(t *testing.T) {
 	srv := newLocalTestServer(t)
 	defer srv.Close()
@@ -625,6 +740,9 @@ func TestLocalhostServer_SwaggerSpec_PhoneOnlyAuth(t *testing.T) {
 	if _, ok := paths["/api/v1/note-files/{path}"]; !ok {
 		t.Fatal("swagger spec missing /api/v1/note-files/{path}")
 	}
+	if _, ok := paths["/api/v1/admin/testing/auth/access-token"]; !ok {
+		t.Fatal("swagger spec missing /api/v1/admin/testing/auth/access-token")
+	}
 	if _, ok := paths["/api/v1/auth/register"]; !ok {
 		t.Fatal("swagger spec missing /api/v1/auth/register")
 	}
@@ -648,6 +766,18 @@ func TestLocalhostServer_SwaggerSpec_PhoneOnlyAuth(t *testing.T) {
 	}
 	if _, hasSecurity := otpLatestGet["security"]; hasSecurity {
 		t.Fatal("expected no security requirement for /api/v1/admin/testing/otp/latest")
+	}
+
+	testingTokenPath, ok := paths["/api/v1/admin/testing/auth/access-token"].(map[string]any)
+	if !ok {
+		t.Fatal("swagger missing testing access-token path")
+	}
+	testingTokenPost, ok := testingTokenPath["post"].(map[string]any)
+	if !ok {
+		t.Fatal("swagger missing POST for testing access-token path")
+	}
+	if _, hasSecurity := testingTokenPost["security"]; hasSecurity {
+		t.Fatal("expected no security requirement for /api/v1/admin/testing/auth/access-token")
 	}
 
 	components, ok := spec["components"].(map[string]any)

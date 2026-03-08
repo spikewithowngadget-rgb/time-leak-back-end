@@ -128,6 +128,37 @@ func (s *AuthService) IssueUserTokens(ctx context.Context, user domain.User, aut
 	return s.issueTokens(ctx, user.UserID, phone, authType, "user")
 }
 
+func (s *AuthService) IssueTestingUserAccessToken(user domain.User, authType string) (string, error) {
+	if strings.TrimSpace(user.UserID) == "" {
+		return "", errors.New("user id is empty")
+	}
+
+	phone := normalizePhone(user.Phone)
+	if phone == "" {
+		return "", errors.New("user phone is empty")
+	}
+
+	authType = strings.TrimSpace(authType)
+	if authType == "" {
+		authType = "testing_phone"
+	}
+
+	now := time.Now().UTC()
+	claims := AccessClaims{
+		UserUUID: user.UserID,
+		Phone:    phone,
+		Role:     "user",
+		AuthType: authType,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:   s.issuer,
+			Subject:  phone,
+			IssuedAt: jwt.NewNumericDate(now),
+		},
+	}
+
+	return s.signAccessToken(claims, s.accessSecret)
+}
+
 func (s *AuthService) IssueAdminToken(username string) (AdminToken, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {

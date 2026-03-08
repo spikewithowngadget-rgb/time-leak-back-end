@@ -610,6 +610,32 @@ const swaggerSpec = `{
           "404": { "description": "Disabled or code not found" }
         }
       }
+    },
+    "/api/v1/admin/testing/auth/access-token": {
+      "post": {
+        "summary": "Create permanent access token by phone (DEV ONLY)",
+        "description": "DEV ONLY: creates a user access token without exp claim. Requires ENABLE_TESTING_ENDPOINTS=true and an existing user with the provided phone.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TestingAccessTokenRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Permanent access token",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TestingAccessTokenResponse" }
+              }
+            }
+          },
+          "400": { "description": "Invalid phone payload" },
+          "404": { "description": "Disabled or user not found" }
+        }
+      }
     }
   },
   "components": {
@@ -805,6 +831,23 @@ const swaggerSpec = `{
         "properties": {
           "access_token": { "type": "string" },
           "expires_in_seconds": { "type": "integer", "example": 60 }
+        }
+      },
+      "TestingAccessTokenRequest": {
+        "type": "object",
+        "required": ["phone"],
+        "properties": {
+          "phone": { "type": "string", "example": "+77015556677" }
+        }
+      },
+      "TestingAccessTokenResponse": {
+        "type": "object",
+        "properties": {
+          "access_token": { "type": "string" },
+          "token_type": { "type": "string", "example": "Bearer" },
+          "userId": { "type": "string", "format": "uuid" },
+          "phone": { "type": "string", "example": "+77015556677" },
+          "auth_type": { "type": "string", "example": "testing_phone_forever" }
         }
       },
       "CreateAdRequest": {

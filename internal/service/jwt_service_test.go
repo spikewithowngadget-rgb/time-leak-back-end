@@ -139,6 +139,38 @@ func TestJWT_VerifyUserAccess_Success(t *testing.T) {
 	}
 }
 
+func TestJWT_IssueTestingUserAccessToken_Success(t *testing.T) {
+	svc, _ := newAuthForTest()
+
+	accessToken, err := svc.IssueTestingUserAccessToken(domain.User{
+		UserID: "u-1",
+		Phone:  "+77015556677",
+	}, "testing_phone_forever")
+	if err != nil {
+		t.Fatalf("IssueTestingUserAccessToken error: %v", err)
+	}
+	if accessToken == "" {
+		t.Fatal("expected access token")
+	}
+
+	claims, err := svc.VerifyUserAccess(accessToken)
+	if err != nil {
+		t.Fatalf("VerifyUserAccess error: %v", err)
+	}
+	if claims.UserUUID != "u-1" {
+		t.Fatalf("unexpected user uuid: %q", claims.UserUUID)
+	}
+	if claims.Phone != "+77015556677" {
+		t.Fatalf("unexpected phone: %q", claims.Phone)
+	}
+	if claims.AuthType != "testing_phone_forever" {
+		t.Fatalf("unexpected auth_type: %q", claims.AuthType)
+	}
+	if claims.ExpiresAt != nil {
+		t.Fatalf("expected no expiry, got %v", claims.ExpiresAt)
+	}
+}
+
 func TestJWT_VerifyAdminAccess_Success(t *testing.T) {
 	svc, _ := newAuthForTest()
 	adminToken, err := svc.IssueAdminToken("Admin")

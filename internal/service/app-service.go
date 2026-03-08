@@ -69,6 +69,19 @@ func (s *AppService) GetUser(ctx context.Context, userID string) (domain.User, e
 	return sanitizeUser(user), nil
 }
 
+func (s *AppService) GetUserByPhone(ctx context.Context, phone string) (domain.User, error) {
+	normalizedPhone, err := validatePhoneStrict(phone)
+	if err != nil {
+		return domain.User{}, err
+	}
+
+	user, err := s.repo.GetUserByPhone(ctx, normalizedPhone)
+	if err != nil {
+		return domain.User{}, err
+	}
+	return sanitizeUser(user), nil
+}
+
 func (s *AppService) UpdateUserLanguage(ctx context.Context, userID, userLanguage string) error {
 	return s.repo.UpdateUserLanguage(ctx, userID, userLanguage)
 }

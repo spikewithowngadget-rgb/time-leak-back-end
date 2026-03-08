@@ -101,6 +101,16 @@ Note responses include `note_files` as downloadable URLs for the mobile app.
   - `ENABLE_TESTING_ENDPOINTS=true`
 - Query: provide `phone`
 
+### Permanent Access Token Endpoint (DEV ONLY)
+
+- Endpoint: `POST /api/v1/admin/testing/auth/access-token`
+- Requires:
+  - `ENABLE_TESTING_ENDPOINTS=true`
+- Body:
+  - `phone`
+- Behavior:
+  - returns a user `access_token` without expiry for an existing user by phone number
+
 ## Tests
 
 ```bash

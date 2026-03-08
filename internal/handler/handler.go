@@ -77,6 +77,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/admin/ads/{id}", h.AdminDeleteAd)
 	mux.HandleFunc("GET /api/v1/admin/ads", h.AdminListAds)
 	mux.HandleFunc("GET /api/v1/admin/testing/otp/latest", h.AdminLatestOTP)
+	mux.HandleFunc("POST /api/v1/admin/testing/auth/access-token", h.AdminTestingAccessToken)
 }
 
 type authRefreshReq struct {
@@ -127,6 +128,10 @@ type authResetPasswordConfirmReq struct {
 type adminLoginReq struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+type testingAccessTokenReq struct {
+	Phone string `json:"phone"`
 }
 
 type createAdReq struct {
