@@ -55,6 +55,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/auth/me", h.AuthMe)
 	mux.HandleFunc("POST /api/v1/auth/notes", h.AuthCreateNote)
 	mux.HandleFunc("GET /api/v1/auth/notes", h.AuthListNotes)
+	mux.HandleFunc("PUT /api/v1/auth/notes/{id}", h.AuthUpdateNote)
+	mux.HandleFunc("DELETE /api/v1/auth/notes/{id}", h.AuthDeleteNote)
+	mux.HandleFunc("GET /api/v1/note-files/{path...}", h.NoteFile)
 
 	mux.HandleFunc("GET /api/v1/me", h.Me)
 
@@ -63,6 +66,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("POST /api/v1/notes", h.CreateNote)
 	mux.HandleFunc("GET /api/v1/users/{id}/notes", h.ListNotes)
+	mux.HandleFunc("PUT /api/v1/users/{id}/notes/{noteId}", h.UpdateUserNote)
+	mux.HandleFunc("DELETE /api/v1/users/{id}/notes/{noteId}", h.DeleteUserNote)
 
 	mux.HandleFunc("GET /api/v1/ads/next", h.AdsNext)
 
@@ -429,23 +434,27 @@ func (h *Handler) AuthCreateNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req authCreateNoteReq
-	if err := decodeJSONBody(r, &req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "bad request")
-		return
-	}
-
-	note, err := h.app.CreateNote(r.Context(), claims.UserUUID, strings.TrimSpace(req.NoteType))
+	payload, err := parseAuthCreateNotePayload(r)
 	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "foreign key") {
-			writeErrorJSON(w, http.StatusNotFound, "user not found")
-			return
-		}
-		writeErrorJSON(w, http.StatusInternalServerError, "internal")
+		h.writeNoteRequestError(w, err)
+		return
+	}
+	defer cleanupMultipartForm(r)
+
+	savedNoteFiles, err := h.saveUploadedNoteFiles(payload.Files)
+	if err != nil {
+		h.writeNoteRequestError(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, note)
+	note, err := h.app.CreateNote(r.Context(), claims.UserUUID, payload.NoteType, savedNoteFiles)
+	if err != nil {
+		h.deleteStoredNoteFiles(savedNoteFiles)
+		h.writeNoteRequestError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, h.noteResponse(r, note))
 }
 
 func (h *Handler) AuthListNotes(w http.ResponseWriter, r *http.Request) {
@@ -456,12 +465,12 @@ func (h *Handler) AuthListNotes(w http.ResponseWriter, r *http.Request) {
 
 	notes, err := h.app.ListNotes(r.Context(), claims.UserUUID)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, "internal")
+		h.writeNoteRequestError(w, err)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"data":  notes,
+		"data":  h.noteListResponse(r, notes),
 		"total": len(notes),
 	})
 }
@@ -512,23 +521,27 @@ func (h *Handler) UpdateUserLanguage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateNote(w http.ResponseWriter, r *http.Request) {
-	var req createNoteReq
-	if err := decodeJSONBody(r, &req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "bad request")
-		return
-	}
-
-	note, err := h.app.CreateNote(r.Context(), strings.TrimSpace(req.UserID), strings.TrimSpace(req.NoteType))
+	payload, err := parseLegacyCreateNotePayload(r)
 	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "foreign key") {
-			writeErrorJSON(w, http.StatusNotFound, "user not found")
-			return
-		}
-		writeErrorJSON(w, http.StatusInternalServerError, "internal")
+		h.writeNoteRequestError(w, err)
+		return
+	}
+	defer cleanupMultipartForm(r)
+
+	savedNoteFiles, err := h.saveUploadedNoteFiles(payload.Files)
+	if err != nil {
+		h.writeNoteRequestError(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, note)
+	note, err := h.app.CreateNote(r.Context(), payload.UserID, payload.NoteType, savedNoteFiles)
+	if err != nil {
+		h.deleteStoredNoteFiles(savedNoteFiles)
+		h.writeNoteRequestError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, h.noteResponse(r, note))
 }
 
 func (h *Handler) ListNotes(w http.ResponseWriter, r *http.Request) {
@@ -540,12 +553,12 @@ func (h *Handler) ListNotes(w http.ResponseWriter, r *http.Request) {
 
 	notes, err := h.app.ListNotes(r.Context(), userID)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, "internal")
+		h.writeNoteRequestError(w, err)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"data":  notes,
+		"data":  h.noteListResponse(r, notes),
 		"total": len(notes),
 	})
 }

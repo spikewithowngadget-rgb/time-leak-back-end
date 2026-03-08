@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -222,7 +223,7 @@ func (r *Repository) UpdateUserPasswordByPhone(ctx context.Context, phone, passw
 	return ensureRowsAffected(res)
 }
 
-func (r *Repository) CreateNote(ctx context.Context, userID, noteType string) (domain.Note, error) {
+func (r *Repository) CreateNote(ctx context.Context, userID, noteType string, noteFiles []string) (domain.Note, error) {
 	noteType = strings.TrimSpace(noteType)
 	if userID == "" {
 		return domain.Note{}, errors.New("userId is empty")
@@ -233,32 +234,89 @@ func (r *Repository) CreateNote(ctx context.Context, userID, noteType string) (d
 	if noteType == "" {
 		return domain.Note{}, errors.New("note_type is empty")
 	}
+	noteFilesJSON, err := marshalNoteFiles(noteFiles)
+	if err != nil {
+		return domain.Note{}, err
+	}
 
 	noteID := dbtraits.GenerateUUID()
-	_, err := r.db.ExecContext(
+	_, err = r.db.ExecContext(
 		ctx,
-		`INSERT INTO notes (id, user_id, note_type) VALUES (?, ?, ?)`,
+		`INSERT INTO notes (id, user_id, note_type, note_files) VALUES (?, ?, ?, ?)`,
 		noteID,
 		userID,
 		noteType,
+		noteFilesJSON,
 	)
 	if err != nil {
 		return domain.Note{}, err
 	}
 
-	row := r.db.QueryRowContext(
-		ctx,
-		`SELECT id, user_id, note_type, created_at FROM notes WHERE id = ?`,
-		noteID,
-	)
+	return r.GetNoteByID(ctx, noteID)
+}
 
-	var note domain.Note
-	var createdAt string
-	if err := row.Scan(&note.ID, &note.UserID, &note.NoteType, &createdAt); err != nil {
+func (r *Repository) GetNoteByID(ctx context.Context, noteID string) (domain.Note, error) {
+	return r.getNote(ctx, noteID, "")
+}
+
+func (r *Repository) GetNoteByIDForUser(ctx context.Context, noteID, userID string) (domain.Note, error) {
+	return r.getNote(ctx, noteID, userID)
+}
+
+func (r *Repository) UpdateNote(ctx context.Context, noteID, userID, noteType string, noteFiles []string) (domain.Note, error) {
+	noteType = strings.TrimSpace(noteType)
+	if noteType == "" {
+		return domain.Note{}, errors.New("note_type is empty")
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(noteID)); err != nil {
+		return domain.Note{}, errors.New("note id must be valid UUID")
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(userID)); err != nil {
+		return domain.Note{}, errors.New("userId must be valid UUID")
+	}
+
+	noteFilesJSON, err := marshalNoteFiles(noteFiles)
+	if err != nil {
 		return domain.Note{}, err
 	}
-	note.CreatedAt = parseSQLiteTime(createdAt)
-	return note, nil
+
+	res, err := r.db.ExecContext(
+		ctx,
+		`UPDATE notes SET note_type = ?, note_files = ? WHERE id = ? AND user_id = ?`,
+		noteType,
+		noteFilesJSON,
+		noteID,
+		userID,
+	)
+	if err != nil {
+		return domain.Note{}, err
+	}
+	if err := ensureRowsAffected(res); err != nil {
+		return domain.Note{}, err
+	}
+
+	return r.GetNoteByIDForUser(ctx, noteID, userID)
+}
+
+func (r *Repository) DeleteNote(ctx context.Context, noteID, userID string) error {
+	if _, err := uuid.Parse(strings.TrimSpace(noteID)); err != nil {
+		return errors.New("note id must be valid UUID")
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(userID)); err != nil {
+		return errors.New("userId must be valid UUID")
+	}
+
+	res, err := r.db.ExecContext(
+		ctx,
+		`DELETE FROM notes WHERE id = ? AND user_id = ?`,
+		noteID,
+		userID,
+	)
+	if err != nil {
+		return err
+	}
+
+	return ensureRowsAffected(res)
 }
 
 func (r *Repository) ListNotesByUserID(ctx context.Context, userID string) ([]domain.Note, error) {
@@ -268,7 +326,7 @@ func (r *Repository) ListNotesByUserID(ctx context.Context, userID string) ([]do
 
 	rows, err := r.db.QueryContext(
 		ctx,
-		`SELECT id, user_id, note_type, created_at FROM notes WHERE user_id = ? ORDER BY created_at ASC`,
+		`SELECT id, user_id, note_type, COALESCE(note_files, '[]'), created_at FROM notes WHERE user_id = ? ORDER BY created_at ASC`,
 		userID,
 	)
 	if err != nil {
@@ -279,15 +337,89 @@ func (r *Repository) ListNotesByUserID(ctx context.Context, userID string) ([]do
 	notes := make([]domain.Note, 0)
 	for rows.Next() {
 		var note domain.Note
+		var noteFilesJSON string
 		var createdAt string
-		if err := rows.Scan(&note.ID, &note.UserID, &note.NoteType, &createdAt); err != nil {
+		if err := rows.Scan(&note.ID, &note.UserID, &note.NoteType, &noteFilesJSON, &createdAt); err != nil {
 			return nil, err
 		}
+		note.NoteFiles = unmarshalNoteFiles(noteFilesJSON)
 		note.CreatedAt = parseSQLiteTime(createdAt)
 		notes = append(notes, note)
 	}
 
 	return notes, rows.Err()
+}
+
+func (r *Repository) getNote(ctx context.Context, noteID, userID string) (domain.Note, error) {
+	if _, err := uuid.Parse(strings.TrimSpace(noteID)); err != nil {
+		return domain.Note{}, errors.New("note id must be valid UUID")
+	}
+
+	query := `SELECT id, user_id, note_type, COALESCE(note_files, '[]'), created_at FROM notes WHERE id = ?`
+	args := []any{noteID}
+	if userID != "" {
+		if _, err := uuid.Parse(strings.TrimSpace(userID)); err != nil {
+			return domain.Note{}, errors.New("userId must be valid UUID")
+		}
+		query += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+
+	row := r.db.QueryRowContext(ctx, query, args...)
+
+	var note domain.Note
+	var noteFilesJSON string
+	var createdAt string
+	if err := row.Scan(&note.ID, &note.UserID, &note.NoteType, &noteFilesJSON, &createdAt); err != nil {
+		return domain.Note{}, err
+	}
+
+	note.NoteFiles = unmarshalNoteFiles(noteFilesJSON)
+	note.CreatedAt = parseSQLiteTime(createdAt)
+	return note, nil
+}
+
+func marshalNoteFiles(noteFiles []string) (string, error) {
+	if len(noteFiles) == 0 {
+		return "[]", nil
+	}
+
+	cleaned := make([]string, 0, len(noteFiles))
+	for _, file := range noteFiles {
+		file = strings.TrimSpace(file)
+		if file == "" {
+			continue
+		}
+		cleaned = append(cleaned, file)
+	}
+
+	raw, err := json.Marshal(cleaned)
+	if err != nil {
+		return "", fmt.Errorf("marshal note files: %w", err)
+	}
+	return string(raw), nil
+}
+
+func unmarshalNoteFiles(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return []string{}
+	}
+
+	var out []string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return []string{}
+	}
+
+	cleaned := make([]string, 0, len(out))
+	for _, file := range out {
+		file = strings.TrimSpace(file)
+		if file == "" {
+			continue
+		}
+		cleaned = append(cleaned, file)
+	}
+	return cleaned
 }
 
 func (r *Repository) GetOrCreateUUIDByEmail(ctx context.Context, email string) (string, error) {

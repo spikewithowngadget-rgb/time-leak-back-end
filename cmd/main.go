@@ -36,6 +36,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	if err := os.MkdirAll(cfg.NoteFilesPath, 0o755); err != nil {
+		zapLogger.Error("error creating note files directory", zap.Error(err), zap.String("path", cfg.NoteFilesPath))
+		return
+	}
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 

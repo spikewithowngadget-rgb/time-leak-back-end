@@ -29,6 +29,7 @@ type Note struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"userId"`
 	NoteType  string    `json:"note_type"`
+	NoteFiles []string  `json:"note_files"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 

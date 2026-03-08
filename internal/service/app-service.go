@@ -21,6 +21,8 @@ var (
 	ErrPasswordRequired         = errors.New("password is required")
 	ErrPasswordMismatch         = errors.New("passwords do not match")
 	ErrPasswordTooShort         = errors.New("password must be at least 8 characters")
+	ErrNoteTypeRequired         = errors.New("note_type is required")
+	ErrTooManyNoteFiles         = errors.New("too many note files")
 	ErrUserAlreadyExists        = errors.New("user already exists")
 	ErrUserNotFound             = errors.New("user not found")
 	ErrInvalidCredentials       = errors.New("invalid credentials")
@@ -71,8 +73,36 @@ func (s *AppService) UpdateUserLanguage(ctx context.Context, userID, userLanguag
 	return s.repo.UpdateUserLanguage(ctx, userID, userLanguage)
 }
 
-func (s *AppService) CreateNote(ctx context.Context, userID, noteType string) (domain.Note, error) {
-	return s.repo.CreateNote(ctx, userID, noteType)
+func (s *AppService) CreateNote(ctx context.Context, userID, noteType string, noteFiles []string) (domain.Note, error) {
+	noteType = strings.TrimSpace(noteType)
+	if noteType == "" {
+		return domain.Note{}, ErrNoteTypeRequired
+	}
+	if len(noteFiles) > 5 {
+		return domain.Note{}, ErrTooManyNoteFiles
+	}
+
+	return s.repo.CreateNote(ctx, userID, noteType, noteFiles)
+}
+
+func (s *AppService) GetNote(ctx context.Context, noteID, userID string) (domain.Note, error) {
+	return s.repo.GetNoteByIDForUser(ctx, noteID, userID)
+}
+
+func (s *AppService) UpdateNote(ctx context.Context, noteID, userID, noteType string, noteFiles []string) (domain.Note, error) {
+	noteType = strings.TrimSpace(noteType)
+	if noteType == "" {
+		return domain.Note{}, ErrNoteTypeRequired
+	}
+	if len(noteFiles) > 5 {
+		return domain.Note{}, ErrTooManyNoteFiles
+	}
+
+	return s.repo.UpdateNote(ctx, noteID, userID, noteType, noteFiles)
+}
+
+func (s *AppService) DeleteNote(ctx context.Context, noteID, userID string) error {
+	return s.repo.DeleteNote(ctx, noteID, userID)
 }
 
 func (s *AppService) ListNotes(ctx context.Context, userID string) ([]domain.Note, error) {

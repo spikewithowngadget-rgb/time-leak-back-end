@@ -1,0 +1,1 @@
+ALTER TABLE notes ADD COLUMN note_files TEXT NOT NULL DEFAULT '[]';

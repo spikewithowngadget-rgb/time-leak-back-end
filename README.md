@@ -6,6 +6,8 @@ Go backend with SQLite, JWT auth, phone-only WhatsApp OTP auth (development stub
 
 - API versioning under `/api/v1`
 - Existing user/profile/notes endpoints preserved
+- Notes support multipart uploads with up to `5` files per note
+- Uploaded note files are stored under `./note_files/{audio|photo|video|document}`
 - Access token TTL is exactly `60s`
 - Refresh token rotation with revocation
 - OTP auth (phone-only WhatsApp, demo stub):
@@ -25,6 +27,7 @@ Go backend with SQLite, JWT auth, phone-only WhatsApp OTP auth (development stub
   - Admin CRUD under `/api/v1/admin/ads`
   - Client rotation endpoint `GET /api/v1/ads/next`
 - Swagger UI: `GET /swagger`
+- Note file download route: `GET /api/v1/note-files/{path}`
 
 ## Run
 
@@ -37,6 +40,7 @@ Environment overrides:
 - `APP_ADDR` (default `:8081`)
 - `DB_PATH` (default `data`)
 - `DB_NAME` (default `timeleak.db`)
+- `NOTE_FILES_PATH` (default `./note_files`)
 - `JWT_ACCESS_SECRET`
 - `JWT_ADMIN_SECRET`
 - `JWT_REFRESH_TTL_HOURS`
@@ -61,6 +65,7 @@ Migrations are embedded and applied automatically at startup from:
 - `traits/database/migrations/0006_refresh_tokens_auth_type.sql`
 - `traits/database/migrations/0007_refresh_tokens_role.sql`
 - `traits/database/migrations/0008_auth_verifications.sql`
+- `traits/database/migrations/0009_note_files.sql`
 
 No manual migrate command is required.
 
@@ -70,6 +75,24 @@ No manual migrate command is required.
 - Swagger UI: `GET /swagger`
 
 Swagger is static in `internal/handler/swagger.go`; regenerate by editing that file.
+
+## Notes API
+
+- Auth create: `POST /api/v1/auth/notes`
+- Auth list: `GET /api/v1/auth/notes`
+- Auth update: `PUT /api/v1/auth/notes/{id}`
+- Auth delete: `DELETE /api/v1/auth/notes/{id}`
+- Legacy create: `POST /api/v1/notes`
+- Legacy list: `GET /api/v1/users/{id}/notes`
+- Legacy update: `PUT /api/v1/users/{id}/notes/{noteId}`
+- Legacy delete: `DELETE /api/v1/users/{id}/notes/{noteId}`
+
+Create and update note endpoints accept `multipart/form-data`:
+
+- `note_type`: string
+- `files`: repeatable file field, maximum `5` files
+
+Note responses include `note_files` as downloadable URLs for the mobile app.
 
 ### OTP Testing Endpoint (DEV ONLY)
 

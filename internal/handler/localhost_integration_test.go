@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -154,25 +157,111 @@ func TestLocalhostServer_PhoneOTPAndNotesFlow(t *testing.T) {
 		t.Fatalf("expected phone %q got %q", phone, meClaimsBody.Phone)
 	}
 
-	authNoteCreate := doReqAuth(t, srv.URL, http.MethodPost, "/api/v1/auth/notes", map[string]any{
+	authNoteCreate := doMultipartReqAuth(t, srv.URL, http.MethodPost, "/api/v1/auth/notes", map[string]string{
 		"note_type": "deadline",
+	}, []multipartTestFile{
+		{
+			FieldName:   "files",
+			FileName:    "voice-note.mp3",
+			ContentType: "audio/mpeg",
+			Content:     []byte("fake-audio"),
+		},
+		{
+			FieldName:   "files",
+			FileName:    "cover.jpg",
+			ContentType: "image/jpeg",
+			Content:     []byte("fake-image"),
+		},
 	}, loginBody.AccessToken)
 	if authNoteCreate.StatusCode != http.StatusCreated {
 		t.Fatalf("auth note create status: got %d want 201", authNoteCreate.StatusCode)
 	}
-	_ = authNoteCreate.Body.Close()
+	var createdNote struct {
+		ID        string   `json:"id"`
+		NoteType  string   `json:"note_type"`
+		NoteFiles []string `json:"note_files"`
+	}
+	decodeJSON(t, authNoteCreate, &createdNote)
+	if createdNote.ID == "" {
+		t.Fatal("expected note id")
+	}
+	if createdNote.NoteType != "deadline" {
+		t.Fatalf("expected note_type=deadline got %q", createdNote.NoteType)
+	}
+	if len(createdNote.NoteFiles) != 2 {
+		t.Fatalf("expected 2 note files, got %d", len(createdNote.NoteFiles))
+	}
+	if !strings.Contains(createdNote.NoteFiles[0], "/api/v1/note-files/audio/") {
+		t.Fatalf("expected audio file url, got %q", createdNote.NoteFiles[0])
+	}
+	if !strings.Contains(createdNote.NoteFiles[1], "/api/v1/note-files/photo/") {
+		t.Fatalf("expected photo file url, got %q", createdNote.NoteFiles[1])
+	}
+
+	noteFileResp := doReq(t, createdNote.NoteFiles[0], http.MethodGet, "", nil)
+	if noteFileResp.StatusCode != http.StatusOK {
+		t.Fatalf("note file status: got %d want 200", noteFileResp.StatusCode)
+	}
+	_ = noteFileResp.Body.Close()
 
 	authNoteList := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/notes", nil, loginBody.AccessToken)
 	if authNoteList.StatusCode != http.StatusOK {
 		t.Fatalf("auth note list status: got %d want 200", authNoteList.StatusCode)
 	}
 	var authList struct {
+		Data []struct {
+			ID        string   `json:"id"`
+			NoteFiles []string `json:"note_files"`
+		} `json:"data"`
 		Total int `json:"total"`
 	}
 	decodeJSON(t, authNoteList, &authList)
 	if authList.Total < 1 {
 		t.Fatalf("expected at least 1 note, got %d", authList.Total)
 	}
+	if len(authList.Data) == 0 || len(authList.Data[0].NoteFiles) != 2 {
+		t.Fatalf("expected note list to include file urls, got %+v", authList.Data)
+	}
+
+	authNoteUpdate := doMultipartReqAuth(t, srv.URL, http.MethodPut, "/api/v1/auth/notes/"+createdNote.ID, map[string]string{
+		"note_type": "updated-deadline",
+	}, []multipartTestFile{
+		{
+			FieldName:   "files",
+			FileName:    "meeting.mp4",
+			ContentType: "video/mp4",
+			Content:     []byte("fake-video"),
+		},
+	}, loginBody.AccessToken)
+	if authNoteUpdate.StatusCode != http.StatusOK {
+		t.Fatalf("auth note update status: got %d want 200", authNoteUpdate.StatusCode)
+	}
+	var updatedNote struct {
+		NoteType  string   `json:"note_type"`
+		NoteFiles []string `json:"note_files"`
+	}
+	decodeJSON(t, authNoteUpdate, &updatedNote)
+	if updatedNote.NoteType != "updated-deadline" {
+		t.Fatalf("expected updated note_type, got %q", updatedNote.NoteType)
+	}
+	if len(updatedNote.NoteFiles) != 1 || !strings.Contains(updatedNote.NoteFiles[0], "/api/v1/note-files/video/") {
+		t.Fatalf("expected updated video file url, got %+v", updatedNote.NoteFiles)
+	}
+
+	tooManyFilesResp := doMultipartReqAuth(t, srv.URL, http.MethodPost, "/api/v1/auth/notes", map[string]string{
+		"note_type": "overflow",
+	}, []multipartTestFile{
+		{FieldName: "files", FileName: "1.txt", ContentType: "text/plain", Content: []byte("1")},
+		{FieldName: "files", FileName: "2.txt", ContentType: "text/plain", Content: []byte("2")},
+		{FieldName: "files", FileName: "3.txt", ContentType: "text/plain", Content: []byte("3")},
+		{FieldName: "files", FileName: "4.txt", ContentType: "text/plain", Content: []byte("4")},
+		{FieldName: "files", FileName: "5.txt", ContentType: "text/plain", Content: []byte("5")},
+		{FieldName: "files", FileName: "6.txt", ContentType: "text/plain", Content: []byte("6")},
+	}, loginBody.AccessToken)
+	if tooManyFilesResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("too many files status: got %d want 400", tooManyFilesResp.StatusCode)
+	}
+	_ = tooManyFilesResp.Body.Close()
 
 	refreshResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/refresh", map[string]any{
 		"refresh_token": loginBody.RefreshToken,
@@ -241,6 +330,18 @@ func TestLocalhostServer_PhoneOTPAndNotesFlow(t *testing.T) {
 	if legacyListBody.Total < 2 {
 		t.Fatalf("expected at least 2 total notes, got %d", legacyListBody.Total)
 	}
+
+	authNoteDelete := doReqAuth(t, srv.URL, http.MethodDelete, "/api/v1/auth/notes/"+createdNote.ID, nil, loginBody.AccessToken)
+	if authNoteDelete.StatusCode != http.StatusOK {
+		t.Fatalf("auth note delete status: got %d want 200", authNoteDelete.StatusCode)
+	}
+	_ = authNoteDelete.Body.Close()
+
+	deletedNoteFileResp := doReq(t, updatedNote.NoteFiles[0], http.MethodGet, "", nil)
+	if deletedNoteFileResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("deleted note file status: got %d want 404", deletedNoteFileResp.StatusCode)
+	}
+	_ = deletedNoteFileResp.Body.Close()
 }
 
 func TestLocalhostServer_RegisterVerificationTokenSingleUse(t *testing.T) {
@@ -518,6 +619,12 @@ func TestLocalhostServer_SwaggerSpec_PhoneOnlyAuth(t *testing.T) {
 	if _, ok := paths["/api/v1/auth/login"]; !ok {
 		t.Fatal("swagger spec missing /api/v1/auth/login")
 	}
+	if _, ok := paths["/api/v1/auth/notes/{id}"]; !ok {
+		t.Fatal("swagger spec missing /api/v1/auth/notes/{id}")
+	}
+	if _, ok := paths["/api/v1/note-files/{path}"]; !ok {
+		t.Fatal("swagger spec missing /api/v1/note-files/{path}")
+	}
 	if _, ok := paths["/api/v1/auth/register"]; !ok {
 		t.Fatal("swagger spec missing /api/v1/auth/register")
 	}
@@ -560,6 +667,18 @@ func TestLocalhostServer_SwaggerSpec_PhoneOnlyAuth(t *testing.T) {
 		t.Fatal("OTPRequestInput.required must be [phone]")
 	}
 
+	noteSchema, ok := schemas["Note"].(map[string]any)
+	if !ok {
+		t.Fatal("swagger missing Note schema")
+	}
+	noteProps, ok := noteSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("swagger Note schema missing properties")
+	}
+	if _, ok := noteProps["note_files"]; !ok {
+		t.Fatal("swagger Note schema missing note_files")
+	}
+
 	servers, ok := spec["servers"].([]any)
 	if !ok || len(servers) == 0 {
 		t.Fatal("swagger spec missing servers")
@@ -585,6 +704,7 @@ func newLocalTestServerWithTestingEndpoints(t *testing.T, enableTestingEndpoints
 		Addr:            ":0",
 		DBPath:          tmp,
 		DBName:          "test.db",
+		NoteFilesPath:   tmp + "/note_files",
 		MaxOpenConns:    5,
 		MaxIdleConns:    5,
 		ConnMaxLifetime: 2 * time.Minute,
@@ -608,6 +728,10 @@ func newLocalTestServerWithTestingEndpoints(t *testing.T, enableTestingEndpoints
 			Password: "QRT123",
 		},
 		EnableTestingEndpoints: enableTestingEndpoints,
+	}
+
+	if err := os.MkdirAll(cfg.NoteFilesPath, 0o755); err != nil {
+		t.Fatalf("mkdir note files path error: %v", err)
 	}
 
 	log := zap.NewNop()
@@ -672,6 +796,70 @@ func doReqAuth(t *testing.T, baseURL, method, path string, body any, token strin
 		t.Fatalf("new request error: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("http request error: %v", err)
+	}
+	return resp
+}
+
+type multipartTestFile struct {
+	FieldName   string
+	FileName    string
+	ContentType string
+	Content     []byte
+}
+
+func doMultipartReqAuth(
+	t *testing.T,
+	baseURL,
+	method,
+	path string,
+	fields map[string]string,
+	files []multipartTestFile,
+	token string,
+) *http.Response {
+	t.Helper()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	for key, value := range fields {
+		if err := writer.WriteField(key, value); err != nil {
+			t.Fatalf("write multipart field error: %v", err)
+		}
+	}
+
+	for _, file := range files {
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", `form-data; name="`+file.FieldName+`"; filename="`+file.FileName+`"`)
+		if file.ContentType != "" {
+			header.Set("Content-Type", file.ContentType)
+		}
+
+		part, err := writer.CreatePart(header)
+		if err != nil {
+			t.Fatalf("create multipart part error: %v", err)
+		}
+		if _, err := part.Write(file.Content); err != nil {
+			t.Fatalf("write multipart file error: %v", err)
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer error: %v", err)
+	}
+
+	req, err := http.NewRequest(method, baseURL+path, &body)
+	if err != nil {
+		t.Fatalf("new request error: %v", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

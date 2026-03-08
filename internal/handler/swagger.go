@@ -256,18 +256,13 @@ const swaggerSpec = `{
     "/api/v1/auth/notes": {
       "post": {
         "summary": "Create note for authenticated user",
+        "description": "Upload a note with optional files. Files are limited to 5 items and are stored under /note_files by media category.",
         "security": [{ "BearerAuth": [] }],
         "requestBody": {
           "required": true,
           "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["note_type"],
-                "properties": {
-                  "note_type": { "type": "string", "example": "deadline" }
-                }
-              }
+            "multipart/form-data": {
+              "schema": { "$ref": "#/components/schemas/AuthNoteUploadRequest" }
             }
           }
         },
@@ -280,6 +275,7 @@ const swaggerSpec = `{
               }
             }
           },
+          "400": { "description": "Invalid payload or too many files" },
           "401": { "description": "Unauthorized" }
         }
       },
@@ -296,6 +292,61 @@ const swaggerSpec = `{
             }
           },
           "401": { "description": "Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/auth/notes/{id}": {
+      "put": {
+        "summary": "Update note for authenticated user",
+        "description": "Update note_type and optionally replace note files. When files are provided they replace the previous files.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": { "$ref": "#/components/schemas/NoteUpdateRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Note" }
+              }
+            }
+          },
+          "400": { "description": "Invalid payload or too many files" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "Note not found" }
+        }
+      },
+      "delete": {
+        "summary": "Delete note for authenticated user",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": { "description": "Deleted" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "Note not found" }
+        }
+      }
+    },
+    "/api/v1/note-files/{path}": {
+      "get": {
+        "summary": "Download stored note file",
+        "parameters": [
+          { "name": "path", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Stored relative note file path such as audio/uuid.mp3" }
+        ],
+        "responses": {
+          "200": { "description": "File content" },
+          "404": { "description": "File not found" }
         }
       }
     },
@@ -339,10 +390,11 @@ const swaggerSpec = `{
     "/api/v1/notes": {
       "post": {
         "summary": "Create note by userId",
+        "description": "Legacy note create endpoint. Accepts multipart form-data with userId, note_type, and up to 5 files.",
         "requestBody": {
           "required": true,
           "content": {
-            "application/json": {
+            "multipart/form-data": {
               "schema": { "$ref": "#/components/schemas/CreateNoteRequest" }
             }
           }
@@ -355,7 +407,8 @@ const swaggerSpec = `{
                 "schema": { "$ref": "#/components/schemas/Note" }
               }
             }
-          }
+          },
+          "400": { "description": "Invalid payload or too many files" }
         }
       }
     },
@@ -374,6 +427,46 @@ const swaggerSpec = `{
               }
             }
           }
+        }
+      }
+    },
+    "/api/v1/users/{id}/notes/{noteId}": {
+      "put": {
+        "summary": "Update note by user ID",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "noteId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": { "$ref": "#/components/schemas/NoteUpdateRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Note" }
+              }
+            }
+          },
+          "400": { "description": "Invalid payload or too many files" },
+          "404": { "description": "Note not found" }
+        }
+      },
+      "delete": {
+        "summary": "Delete note by user ID",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "noteId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": { "description": "Deleted" },
+          "404": { "description": "Note not found" }
         }
       }
     },
@@ -630,12 +723,40 @@ const swaggerSpec = `{
           "userLanguage": { "type": "string", "example": "ru" }
         }
       },
+      "AuthNoteUploadRequest": {
+        "type": "object",
+        "required": ["note_type"],
+        "properties": {
+          "note_type": { "type": "string", "example": "deadline" },
+          "files": {
+            "type": "array",
+            "maxItems": 5,
+            "items": { "type": "string", "format": "binary" }
+          }
+        }
+      },
       "CreateNoteRequest": {
         "type": "object",
         "required": ["userId", "note_type"],
         "properties": {
           "userId": { "type": "string", "format": "uuid" },
-          "note_type": { "type": "string", "example": "deadline" }
+          "note_type": { "type": "string", "example": "deadline" },
+          "files": {
+            "type": "array",
+            "maxItems": 5,
+            "items": { "type": "string", "format": "binary" }
+          }
+        }
+      },
+      "NoteUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "note_type": { "type": "string", "example": "updated-deadline" },
+          "files": {
+            "type": "array",
+            "maxItems": 5,
+            "items": { "type": "string", "format": "binary" }
+          }
         }
       },
       "User": {
@@ -654,6 +775,10 @@ const swaggerSpec = `{
           "id": { "type": "string", "format": "uuid" },
           "userId": { "type": "string", "format": "uuid" },
           "note_type": { "type": "string" },
+          "note_files": {
+            "type": "array",
+            "items": { "type": "string", "example": "http://localhost:8081/api/v1/note-files/audio/abc123.mp3" }
+          },
           "createdAt": { "type": "string", "format": "date-time" }
         }
       },

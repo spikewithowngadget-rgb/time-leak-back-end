@@ -35,6 +35,7 @@ type Config struct {
 	Addr                   string
 	DBPath                 string
 	DBName                 string
+	NoteFilesPath          string
 	MaxOpenConns           int
 	MaxIdleConns           int
 	ConnMaxLifetime        time.Duration
@@ -49,6 +50,7 @@ func NewConfig() (*Config, error) {
 		Addr:            ":8081",
 		DBPath:          "data",
 		DBName:          "timeleak.db",
+		NoteFilesPath:   "./note_files",
 		MaxOpenConns:    25,
 		MaxIdleConns:    25,
 		ConnMaxLifetime: 5 * time.Minute,
@@ -82,6 +84,9 @@ func NewConfig() (*Config, error) {
 	}
 	if v := os.Getenv("DB_NAME"); v != "" {
 		cfg.DBName = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("NOTE_FILES_PATH"); v != "" {
+		cfg.NoteFilesPath = strings.TrimSpace(v)
 	}
 	if v := os.Getenv("DB_MAX_OPEN_CONNS"); v != "" {
 		n, err := strconv.Atoi(v)
@@ -173,6 +178,9 @@ func NewConfig() (*Config, error) {
 	}
 	if cfg.DBName == "" {
 		return nil, errors.New("DB_NAME is empty")
+	}
+	if cfg.NoteFilesPath == "" {
+		return nil, errors.New("NOTE_FILES_PATH is empty")
 	}
 	if cfg.MaxOpenConns <= 0 {
 		return nil, errors.New("DB_MAX_OPEN_CONNS must be > 0")

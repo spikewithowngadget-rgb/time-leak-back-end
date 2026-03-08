@@ -12,7 +12,10 @@ import (
 type IUserNotesService interface {
 	GetUser(ctx context.Context, userID string) (domain.User, error)
 	UpdateUserLanguage(ctx context.Context, userID, userLanguage string) error
-	CreateNote(ctx context.Context, userID, noteType string) (domain.Note, error)
+	CreateNote(ctx context.Context, userID, noteType string, noteFiles []string) (domain.Note, error)
+	GetNote(ctx context.Context, noteID, userID string) (domain.Note, error)
+	UpdateNote(ctx context.Context, noteID, userID, noteType string, noteFiles []string) (domain.Note, error)
+	DeleteNote(ctx context.Context, noteID, userID string) error
 	ListNotes(ctx context.Context, userID string) ([]domain.Note, error)
 	CreateAuthVerification(
 		ctx context.Context,
