@@ -65,8 +65,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/users/{id}/language", h.UpdateUserLanguage)
 
 	mux.HandleFunc("POST /api/v1/notes", h.CreateNote)
-	mux.HandleFunc("PUT /api/v1/users/{id}/notes/{noteId}", h.UpdateUserNote)
-	mux.HandleFunc("DELETE /api/v1/users/{id}/notes/{noteId}", h.DeleteUserNote)
 
 	mux.HandleFunc("GET /api/v1/ads/next", h.AdsNext)
 

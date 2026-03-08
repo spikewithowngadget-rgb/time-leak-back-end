@@ -412,46 +412,6 @@ const swaggerSpec = `{
         }
       }
     },
-    "/api/v1/users/{id}/notes/{noteId}": {
-      "put": {
-        "summary": "Update note by user ID",
-        "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
-          { "name": "noteId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": { "$ref": "#/components/schemas/NoteUpdateRequest" }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Updated",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/Note" }
-              }
-            }
-          },
-          "400": { "description": "Invalid payload or too many files" },
-          "404": { "description": "Note not found" }
-        }
-      },
-      "delete": {
-        "summary": "Delete note by user ID",
-        "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
-          { "name": "noteId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
-        ],
-        "responses": {
-          "200": { "description": "Deleted" },
-          "404": { "description": "Note not found" }
-        }
-      }
-    },
     "/api/v1/admin/auth/login": {
       "post": {
         "summary": "Admin login",

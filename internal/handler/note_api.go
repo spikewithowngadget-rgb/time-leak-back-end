@@ -40,28 +40,6 @@ func (h *Handler) AuthDeleteNote(w http.ResponseWriter, r *http.Request) {
 	h.deleteNote(w, r, noteID, claims.UserUUID)
 }
 
-func (h *Handler) UpdateUserNote(w http.ResponseWriter, r *http.Request) {
-	userID := strings.TrimSpace(r.PathValue("id"))
-	noteID := strings.TrimSpace(r.PathValue("noteId"))
-	if userID == "" || noteID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "bad request")
-		return
-	}
-
-	h.updateNote(w, r, noteID, userID)
-}
-
-func (h *Handler) DeleteUserNote(w http.ResponseWriter, r *http.Request) {
-	userID := strings.TrimSpace(r.PathValue("id"))
-	noteID := strings.TrimSpace(r.PathValue("noteId"))
-	if userID == "" || noteID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "bad request")
-		return
-	}
-
-	h.deleteNote(w, r, noteID, userID)
-}
-
 func (h *Handler) NoteFile(w http.ResponseWriter, r *http.Request) {
 	filePath := strings.TrimSpace(r.PathValue("path"))
 	if filePath == "" {
