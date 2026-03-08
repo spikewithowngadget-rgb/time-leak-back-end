@@ -65,7 +65,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/users/{id}/language", h.UpdateUserLanguage)
 
 	mux.HandleFunc("POST /api/v1/notes", h.CreateNote)
-	mux.HandleFunc("GET /api/v1/users/{id}/notes", h.ListNotes)
 	mux.HandleFunc("PUT /api/v1/users/{id}/notes/{noteId}", h.UpdateUserNote)
 	mux.HandleFunc("DELETE /api/v1/users/{id}/notes/{noteId}", h.DeleteUserNote)
 
@@ -547,25 +546,6 @@ func (h *Handler) CreateNote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, h.noteResponse(r, note))
-}
-
-func (h *Handler) ListNotes(w http.ResponseWriter, r *http.Request) {
-	userID := strings.TrimSpace(r.PathValue("id"))
-	if userID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "bad request")
-		return
-	}
-
-	notes, err := h.app.ListNotes(r.Context(), userID)
-	if err != nil {
-		h.writeNoteRequestError(w, err)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"data":  h.noteListResponse(r, notes),
-		"total": len(notes),
-	})
 }
 
 func (h *Handler) AdsNext(w http.ResponseWriter, r *http.Request) {

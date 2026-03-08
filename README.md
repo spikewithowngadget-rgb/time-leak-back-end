@@ -83,7 +83,6 @@ Swagger is static in `internal/handler/swagger.go`; regenerate by editing that f
 - Auth update: `PUT /api/v1/auth/notes/{id}`
 - Auth delete: `DELETE /api/v1/auth/notes/{id}`
 - Legacy create: `POST /api/v1/notes`
-- Legacy list: `GET /api/v1/users/{id}/notes`
 - Legacy update: `PUT /api/v1/users/{id}/notes/{noteId}`
 - Legacy delete: `DELETE /api/v1/users/{id}/notes/{noteId}`
 

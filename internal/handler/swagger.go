@@ -412,24 +412,6 @@ const swaggerSpec = `{
         }
       }
     },
-    "/api/v1/users/{id}/notes": {
-      "get": {
-        "summary": "List notes by user ID",
-        "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
-        ],
-        "responses": {
-          "200": {
-            "description": "Notes",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/NotesListResponse" }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/users/{id}/notes/{noteId}": {
       "put": {
         "summary": "Update note by user ID",

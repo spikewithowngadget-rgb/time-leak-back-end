@@ -319,14 +319,14 @@ func TestLocalhostServer_PhoneOTPAndNotesFlow(t *testing.T) {
 	}
 	_ = legacyCreate.Body.Close()
 
-	legacyList := doReq(t, srv.URL, http.MethodGet, "/api/v1/users/"+registerBody.User.UserID+"/notes", nil)
-	if legacyList.StatusCode != http.StatusOK {
-		t.Fatalf("legacy note list status: got %d want 200", legacyList.StatusCode)
+	authNoteListAfterLegacyCreate := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/auth/notes", nil, loginBody.AccessToken)
+	if authNoteListAfterLegacyCreate.StatusCode != http.StatusOK {
+		t.Fatalf("auth note list after legacy create status: got %d want 200", authNoteListAfterLegacyCreate.StatusCode)
 	}
 	var legacyListBody struct {
 		Total int `json:"total"`
 	}
-	decodeJSON(t, legacyList, &legacyListBody)
+	decodeJSON(t, authNoteListAfterLegacyCreate, &legacyListBody)
 	if legacyListBody.Total < 2 {
 		t.Fatalf("expected at least 2 total notes, got %d", legacyListBody.Total)
 	}
@@ -739,6 +739,9 @@ func TestLocalhostServer_SwaggerSpec_PhoneOnlyAuth(t *testing.T) {
 	}
 	if _, ok := paths["/api/v1/note-files/{path}"]; !ok {
 		t.Fatal("swagger spec missing /api/v1/note-files/{path}")
+	}
+	if _, ok := paths["/api/v1/users/{id}/notes"]; ok {
+		t.Fatal("swagger must not expose /api/v1/users/{id}/notes")
 	}
 	if _, ok := paths["/api/v1/admin/testing/auth/access-token"]; !ok {
 		t.Fatal("swagger spec missing /api/v1/admin/testing/auth/access-token")
