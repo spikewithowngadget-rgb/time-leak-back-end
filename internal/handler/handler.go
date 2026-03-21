@@ -394,7 +394,7 @@ func (h *Handler) AuthRefresh(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"access_token":       pair.AccessToken,
 		"refresh_token":      pair.RefreshToken,
-		"expires_in_seconds": h.jwt.AccessTTLSeconds(),
+		"expires_in_seconds": ttlForAccessToken(h.jwt, pair.AccessToken),
 	})
 }
 
@@ -840,4 +840,16 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func ttlForAccessToken(jwtService service.IJWTService, accessToken string) int {
+	ttl := jwtService.AccessTTLSeconds()
+	claims, err := jwtService.VerifyAccess(accessToken)
+	if err != nil {
+		return ttl
+	}
+	if claims.Role == "admin" {
+		return jwtService.AdminTTLSeconds()
+	}
+	return ttl
 }

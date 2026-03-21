@@ -772,6 +772,7 @@ const swaggerSpec = `{
         "type": "object",
         "properties": {
           "access_token": { "type": "string" },
+          "refresh_token": { "type": "string" },
           "expires_in_seconds": { "type": "integer", "example": 60 }
         }
       },

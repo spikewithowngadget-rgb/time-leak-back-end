@@ -517,6 +517,71 @@ func (r *Repository) Revoke(ctx context.Context, token string) error {
 	return ensureRowsAffected(res)
 }
 
+func (r *Repository) SaveAdminRefresh(ctx context.Context, token string, rec domain.AdminRefreshRecord) error {
+	token = strings.TrimSpace(token)
+	username := strings.TrimSpace(rec.Username)
+	if token == "" {
+		return errors.New("admin refresh token is empty")
+	}
+	if username == "" {
+		return errors.New("admin username is empty")
+	}
+
+	_, err := r.db.ExecContext(
+		ctx,
+		`INSERT INTO admin_refresh_tokens (token, username, expires_at, revoked) VALUES (?, ?, ?, ?)`,
+		token,
+		username,
+		rec.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		boolToInt(rec.Revoked),
+	)
+	if err != nil {
+		return fmt.Errorf("save admin refresh token: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) GetAdminRefresh(ctx context.Context, token string) (domain.AdminRefreshRecord, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return domain.AdminRefreshRecord{}, sql.ErrNoRows
+	}
+
+	row := r.db.QueryRowContext(
+		ctx,
+		`SELECT username, expires_at, revoked FROM admin_refresh_tokens WHERE token = ?`,
+		token,
+	)
+
+	var (
+		rec       domain.AdminRefreshRecord
+		expiresAt string
+		revoked   int
+	)
+	if err := row.Scan(&rec.Username, &expiresAt, &revoked); err != nil {
+		return domain.AdminRefreshRecord{}, err
+	}
+
+	rec.Username = strings.TrimSpace(rec.Username)
+	rec.ExpiresAt = parseSQLiteTime(expiresAt)
+	rec.Revoked = revoked != 0
+	return rec, nil
+}
+
+func (r *Repository) RevokeAdminRefresh(ctx context.Context, token string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return sql.ErrNoRows
+	}
+
+	res, err := r.db.ExecContext(ctx, `UPDATE admin_refresh_tokens SET revoked = 1 WHERE token = ?`, token)
+	if err != nil {
+		return err
+	}
+
+	return ensureRowsAffected(res)
+}
+
 func (r *Repository) CreateOTPRequest(
 	ctx context.Context,
 	requestID string,

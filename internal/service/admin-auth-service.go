@@ -14,11 +14,12 @@ var ErrInvalidAdminCredentials = errors.New("invalid admin credentials")
 
 type AdminLoginResponse struct {
 	AccessToken      string `json:"access_token"`
+	RefreshToken     string `json:"refresh_token"`
 	ExpiresInSeconds int    `json:"expires_in_seconds"`
 }
 
 type AdminTokenIssuer interface {
-	IssueAdminToken(username string) (AdminToken, error)
+	IssueAdminToken(ctx context.Context, username string) (AdminToken, error)
 }
 
 type AdminAuthService struct {
@@ -41,18 +42,18 @@ func NewAdminAuthService(cfg config.AdminConfig, issuer AdminTokenIssuer, log *z
 }
 
 func (s *AdminAuthService) Login(ctx context.Context, username, password string) (AdminLoginResponse, error) {
-	_ = ctx
 	if !constantTimeEqual(strings.TrimSpace(username), s.username) ||
 		!constantTimeEqual(strings.TrimSpace(password), s.password) {
 		return AdminLoginResponse{}, ErrInvalidAdminCredentials
 	}
 
-	token, err := s.issuer.IssueAdminToken(s.username)
+	token, err := s.issuer.IssueAdminToken(ctx, s.username)
 	if err != nil {
 		return AdminLoginResponse{}, err
 	}
 	return AdminLoginResponse{
 		AccessToken:      token.AccessToken,
+		RefreshToken:     token.RefreshToken,
 		ExpiresInSeconds: token.ExpiresInSeconds,
 	}, nil
 }

@@ -44,7 +44,7 @@ type IUserNotesService interface {
 type IJWTService interface {
 	IssueUserTokens(ctx context.Context, user domain.User, authType string) (TokenPair, error)
 	IssueTestingUserAccessToken(user domain.User, authType string) (string, error)
-	IssueAdminToken(username string) (AdminToken, error)
+	IssueAdminToken(ctx context.Context, username string) (AdminToken, error)
 	VerifyAccess(accessToken string) (*AccessClaims, error)
 	VerifyUserAccess(accessToken string) (*AccessClaims, error)
 	VerifyAdminAccess(accessToken string) (*AccessClaims, error)

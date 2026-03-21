@@ -16,14 +16,18 @@ type mockRefreshStore struct {
 	getErr    error
 	revokeErr error
 
-	data    map[string]domain.RefreshRecord
-	revoked map[string]bool
+	data         map[string]domain.RefreshRecord
+	adminData    map[string]domain.AdminRefreshRecord
+	revoked      map[string]bool
+	adminRevoked map[string]bool
 }
 
 func newMockRefreshStore() *mockRefreshStore {
 	return &mockRefreshStore{
-		data:    make(map[string]domain.RefreshRecord),
-		revoked: make(map[string]bool),
+		data:         make(map[string]domain.RefreshRecord),
+		adminData:    make(map[string]domain.AdminRefreshRecord),
+		revoked:      make(map[string]bool),
+		adminRevoked: make(map[string]bool),
 	}
 }
 
@@ -55,6 +59,38 @@ func (m *mockRefreshStore) Revoke(_ context.Context, token string) error {
 	if ok {
 		rec.Revoked = true
 		m.data[token] = rec
+	}
+	return nil
+}
+
+func (m *mockRefreshStore) SaveAdminRefresh(_ context.Context, token string, rec domain.AdminRefreshRecord) error {
+	if m.saveErr != nil {
+		return m.saveErr
+	}
+	m.adminData[token] = rec
+	return nil
+}
+
+func (m *mockRefreshStore) GetAdminRefresh(_ context.Context, token string) (domain.AdminRefreshRecord, error) {
+	if m.getErr != nil {
+		return domain.AdminRefreshRecord{}, m.getErr
+	}
+	rec, ok := m.adminData[token]
+	if !ok {
+		return domain.AdminRefreshRecord{}, errors.New("not found")
+	}
+	return rec, nil
+}
+
+func (m *mockRefreshStore) RevokeAdminRefresh(_ context.Context, token string) error {
+	if m.revokeErr != nil {
+		return m.revokeErr
+	}
+	m.adminRevoked[token] = true
+	rec, ok := m.adminData[token]
+	if ok {
+		rec.Revoked = true
+		m.adminData[token] = rec
 	}
 	return nil
 }
@@ -173,7 +209,7 @@ func TestJWT_IssueTestingUserAccessToken_Success(t *testing.T) {
 
 func TestJWT_VerifyAdminAccess_Success(t *testing.T) {
 	svc, _ := newAuthForTest()
-	adminToken, err := svc.IssueAdminToken("Admin")
+	adminToken, err := svc.IssueAdminToken(context.Background(), "Admin")
 	if err != nil {
 		t.Fatalf("IssueAdminToken error: %v", err)
 	}
@@ -187,6 +223,9 @@ func TestJWT_VerifyAdminAccess_Success(t *testing.T) {
 	}
 	if claims.AuthType != "admin_login" {
 		t.Fatalf("unexpected auth_type: %q", claims.AuthType)
+	}
+	if adminToken.RefreshToken == "" {
+		t.Fatal("expected admin refresh token")
 	}
 }
 
@@ -286,5 +325,33 @@ func TestJWT_Refresh_Expired(t *testing.T) {
 	}
 	if !store.revoked["r1"] {
 		t.Fatal("expected expired refresh to be revoked")
+	}
+}
+
+func TestJWT_Refresh_AdminSuccess(t *testing.T) {
+	svc, store := newAuthForTest()
+
+	adminToken, err := svc.IssueAdminToken(context.Background(), "Admin")
+	if err != nil {
+		t.Fatalf("IssueAdminToken error: %v", err)
+	}
+
+	newPair, err := svc.Refresh(context.Background(), adminToken.RefreshToken)
+	if err != nil {
+		t.Fatalf("Refresh error: %v", err)
+	}
+	if newPair.AccessToken == "" || newPair.RefreshToken == "" {
+		t.Fatal("expected refreshed admin token pair")
+	}
+	if !store.adminRevoked[adminToken.RefreshToken] {
+		t.Fatal("expected old admin refresh token to be revoked")
+	}
+
+	claims, err := svc.VerifyAdminAccess(newPair.AccessToken)
+	if err != nil {
+		t.Fatalf("VerifyAdminAccess error: %v", err)
+	}
+	if claims.Role != "admin" {
+		t.Fatalf("unexpected role: %q", claims.Role)
 	}
 }

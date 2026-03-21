@@ -55,11 +55,15 @@ func TestLocalhostServer_PhoneOTPAndNotesFlow(t *testing.T) {
 		t.Fatalf("admin login status: got %d want 200", adminLogin.StatusCode)
 	}
 	var adminBody struct {
-		AccessToken string `json:"access_token"`
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
 	}
 	decodeJSON(t, adminLogin, &adminBody)
 	if adminBody.AccessToken == "" {
 		t.Fatal("expected admin access token")
+	}
+	if adminBody.RefreshToken == "" {
+		t.Fatal("expected admin refresh token")
 	}
 
 	otpCodeResp := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/admin/testing/otp/latest?phone=%2B77015556677", nil, adminBody.AccessToken)
@@ -342,6 +346,50 @@ func TestLocalhostServer_PhoneOTPAndNotesFlow(t *testing.T) {
 		t.Fatalf("deleted note file status: got %d want 404", deletedNoteFileResp.StatusCode)
 	}
 	_ = deletedNoteFileResp.Body.Close()
+}
+
+func TestLocalhostServer_AdminLoginRefreshFlow(t *testing.T) {
+	srv := newLocalTestServerWithTestingEndpoints(t, false)
+	defer srv.Close()
+
+	adminLogin := doReq(t, srv.URL, http.MethodPost, "/api/v1/admin/auth/login", map[string]any{
+		"username": "Admin",
+		"password": "QRT123",
+	})
+	if adminLogin.StatusCode != http.StatusOK {
+		t.Fatalf("admin login status: got %d want 200", adminLogin.StatusCode)
+	}
+
+	var adminBody struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	decodeJSON(t, adminLogin, &adminBody)
+	if adminBody.AccessToken == "" || adminBody.RefreshToken == "" {
+		t.Fatal("expected admin access and refresh tokens")
+	}
+
+	refreshResp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/refresh", map[string]any{
+		"refresh_token": adminBody.RefreshToken,
+	})
+	if refreshResp.StatusCode != http.StatusOK {
+		t.Fatalf("admin refresh status: got %d want 200", refreshResp.StatusCode)
+	}
+
+	var refreshBody struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	decodeJSON(t, refreshResp, &refreshBody)
+	if refreshBody.AccessToken == "" || refreshBody.RefreshToken == "" {
+		t.Fatal("expected refreshed admin token pair")
+	}
+
+	listResp := doReqAuth(t, srv.URL, http.MethodGet, "/api/v1/admin/ads?limit=10&offset=0", nil, refreshBody.AccessToken)
+	if listResp.StatusCode != http.StatusOK {
+		t.Fatalf("admin ads status after refresh: got %d want 200", listResp.StatusCode)
+	}
+	_ = listResp.Body.Close()
 }
 
 func TestLocalhostServer_RegisterVerificationTokenSingleUse(t *testing.T) {

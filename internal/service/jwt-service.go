@@ -32,6 +32,7 @@ type TokenPair struct {
 
 type AdminToken struct {
 	AccessToken      string `json:"access_token"`
+	RefreshToken     string `json:"refresh_token"`
 	ExpiresInSeconds int    `json:"expires_in_seconds"`
 }
 
@@ -47,6 +48,9 @@ type RefreshStore interface {
 	Save(ctx context.Context, token string, rec domain.RefreshRecord) error
 	Get(ctx context.Context, token string) (domain.RefreshRecord, error)
 	Revoke(ctx context.Context, token string) error
+	SaveAdminRefresh(ctx context.Context, token string, rec domain.AdminRefreshRecord) error
+	GetAdminRefresh(ctx context.Context, token string) (domain.AdminRefreshRecord, error)
+	RevokeAdminRefresh(ctx context.Context, token string) error
 }
 
 type AuthService struct {
@@ -159,30 +163,35 @@ func (s *AuthService) IssueTestingUserAccessToken(user domain.User, authType str
 	return s.signAccessToken(claims, s.accessSecret)
 }
 
-func (s *AuthService) IssueAdminToken(username string) (AdminToken, error) {
+func (s *AuthService) IssueAdminToken(ctx context.Context, username string) (AdminToken, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
 		return AdminToken{}, errors.New("username is empty")
 	}
 
-	now := time.Now().UTC()
-	claims := AccessClaims{
-		Role:     "admin",
-		AuthType: "admin_login",
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    s.issuer,
-			Subject:   username,
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(s.adminTTL)),
-		},
-	}
-
-	access, err := s.signAccessToken(claims, s.adminSecret)
+	access, err := s.issueAdminAccessToken(username)
 	if err != nil {
 		return AdminToken{}, err
 	}
 
-	return AdminToken{AccessToken: access, ExpiresInSeconds: int(s.adminTTL.Seconds())}, nil
+	refresh, err := newRandomToken(48)
+	if err != nil {
+		return AdminToken{}, err
+	}
+
+	if err := s.store.SaveAdminRefresh(ctx, refresh, domain.AdminRefreshRecord{
+		Username:  username,
+		ExpiresAt: time.Now().UTC().Add(s.refreshTTL),
+		Revoked:   false,
+	}); err != nil {
+		return AdminToken{}, err
+	}
+
+	return AdminToken{
+		AccessToken:      access,
+		RefreshToken:     refresh,
+		ExpiresInSeconds: int(s.adminTTL.Seconds()),
+	}, nil
 }
 
 func (s *AuthService) issueTokens(
@@ -246,6 +255,22 @@ func (s *AuthService) issueTokens(
 func (s *AuthService) signAccessToken(claims AccessClaims, secret []byte) (string, error) {
 	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return t.SignedString(secret)
+}
+
+func (s *AuthService) issueAdminAccessToken(username string) (string, error) {
+	now := time.Now().UTC()
+	claims := AccessClaims{
+		Role:     "admin",
+		AuthType: "admin_login",
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    s.issuer,
+			Subject:   username,
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(s.adminTTL)),
+		},
+	}
+
+	return s.signAccessToken(claims, s.adminSecret)
 }
 
 func (s *AuthService) VerifyAccess(accessToken string) (*AccessClaims, error) {
@@ -317,29 +342,54 @@ func (s *AuthService) Refresh(ctx context.Context, oldRefresh string) (TokenPair
 	}
 
 	rec, err := s.store.Get(ctx, oldRefresh)
+	if err == nil {
+		if rec.Revoked {
+			return TokenPair{}, ErrRefreshRevoked
+		}
+		if time.Now().After(rec.ExpiresAt) {
+			_ = s.store.Revoke(ctx, oldRefresh)
+			return TokenPair{}, ErrRefreshExpired
+		}
+
+		if err := s.store.Revoke(ctx, oldRefresh); err != nil {
+			return TokenPair{}, err
+		}
+
+		if strings.TrimSpace(rec.AuthType) == "" {
+			rec.AuthType = "otp_whatsapp"
+		}
+		if strings.TrimSpace(rec.Role) == "" {
+			rec.Role = "user"
+		}
+
+		return s.issueTokens(ctx, rec.UserUUID, normalizePhone(rec.Phone), rec.AuthType, rec.Role)
+	}
+
+	adminRec, err := s.store.GetAdminRefresh(ctx, oldRefresh)
 	if err != nil {
 		return TokenPair{}, ErrRefreshNotFound
 	}
-	if rec.Revoked {
+	if adminRec.Revoked {
 		return TokenPair{}, ErrRefreshRevoked
 	}
-	if time.Now().After(rec.ExpiresAt) {
-		_ = s.store.Revoke(ctx, oldRefresh)
+	if time.Now().After(adminRec.ExpiresAt) {
+		_ = s.store.RevokeAdminRefresh(ctx, oldRefresh)
 		return TokenPair{}, ErrRefreshExpired
 	}
 
-	if err := s.store.Revoke(ctx, oldRefresh); err != nil {
+	if err := s.store.RevokeAdminRefresh(ctx, oldRefresh); err != nil {
 		return TokenPair{}, err
 	}
 
-	if strings.TrimSpace(rec.AuthType) == "" {
-		rec.AuthType = "otp_whatsapp"
-	}
-	if strings.TrimSpace(rec.Role) == "" {
-		rec.Role = "user"
+	adminToken, err := s.IssueAdminToken(ctx, adminRec.Username)
+	if err != nil {
+		return TokenPair{}, err
 	}
 
-	return s.issueTokens(ctx, rec.UserUUID, normalizePhone(rec.Phone), rec.AuthType, rec.Role)
+	return TokenPair{
+		AccessToken:  adminToken.AccessToken,
+		RefreshToken: adminToken.RefreshToken,
+	}, nil
 }
 
 func newRandomToken(n int) (string, error) {
