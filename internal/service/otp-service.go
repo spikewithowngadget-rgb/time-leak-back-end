@@ -34,6 +34,15 @@ var (
 	ErrOTPTestingCodeNotFound = errors.New("otp testing code not found")
 )
 
+// appStoreTestPhone is the dedicated number for App Store / Play Market review
+// engineers. The OTP for this number is always appStoreTestOTPCode so reviewers
+// can complete registration without waiting for a real WhatsApp message.
+// Only this single number gets the bypass; all other phones use random codes.
+const (
+	appStoreTestPhone   = "+77471231213"
+	appStoreTestOTPCode = "1111"
+)
+
 type OTPRepository interface {
 	CreateOTPRequest(
 		ctx context.Context,
@@ -168,9 +177,18 @@ func (s *OTPService) RequestOTP(ctx context.Context, channel domain.OTPChannel, 
 	}
 
 	requestID := dbtraits.GenerateUUID()
-	code, err := generateNumericOTPCode()
-	if err != nil {
-		return domain.OTPRequestResult{}, err
+	var code string
+	if destination == appStoreTestPhone {
+		// Fixed bypass code for App Store / Play Market review accounts.
+		// Only this specific number uses this bypass — all other phones go through
+		// the normal random code path.
+		code = appStoreTestOTPCode
+	} else {
+		var genErr error
+		code, genErr = generateNumericOTPCode()
+		if genErr != nil {
+			return domain.OTPRequestResult{}, genErr
+		}
 	}
 	codeHash := s.hashOTP(requestID, channel, destination, code)
 	expiresAt := now.Add(s.otpTTL)

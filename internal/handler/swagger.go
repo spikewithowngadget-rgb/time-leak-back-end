@@ -578,6 +578,35 @@ const swaggerSpec = `{
           "404": { "description": "Disabled or user not found" }
         }
       }
+    },
+    "/api/delete/user": {
+      "delete": {
+        "summary": "Deactivate user (soft delete)",
+        "description": "Sets isActive=false on the user record. The user is NOT removed from the database. Requires admin JWT. Login is blocked for deactivated users.",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DeleteUserRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "User deactivated",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DeleteUserResponse" }
+              }
+            }
+          },
+          "400": { "description": "Missing or invalid user_id" },
+          "401": { "description": "Unauthorized — missing or invalid admin token" },
+          "404": { "description": "User not found" },
+          "500": { "description": "Internal server error" }
+        }
+      }
     }
   },
   "components": {
@@ -734,6 +763,7 @@ const swaggerSpec = `{
           "email": { "type": "string", "format": "email" },
           "phone": { "type": "string", "example": "+77015556677" },
           "userLanguage": { "type": "string", "example": "en" },
+          "isActive": { "type": "boolean", "example": true },
           "createdAt": { "type": "string", "format": "date-time" }
         }
       },
@@ -832,6 +862,19 @@ const swaggerSpec = `{
             "items": { "$ref": "#/components/schemas/Ad" }
           },
           "total": { "type": "integer" }
+        }
+      },
+      "DeleteUserRequest": {
+        "type": "object",
+        "required": ["user_id"],
+        "properties": {
+          "user_id": { "type": "string", "format": "uuid", "example": "550e8400-e29b-41d4-a716-446655440000" }
+        }
+      },
+      "DeleteUserResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "example": "deactivated" }
         }
       }
     }

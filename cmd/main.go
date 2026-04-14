@@ -16,6 +16,7 @@ import (
 	"time-leak/traits/logger"
 
 	"go.uber.org/zap"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func main() {
@@ -59,6 +60,17 @@ func main() {
 
 	repos := repository.NewRepositories(db)
 	services := service.NewServices(ctx, cfg, repos, zapLogger)
+
+	// Seed the Swagger example test user so that the /api/v1/auth/login example
+	// in Swagger UI works out of the box.
+	if hash, err := bcrypt.GenerateFromPassword([]byte("StrongPass123!"), bcrypt.DefaultCost); err == nil {
+		if err := repos.Auth.SeedUserIfNotExists(ctx, "wa_77015556677@otp.local", "+77015556677", string(hash), "en"); err != nil {
+			zapLogger.Warn("failed to seed swagger test user", zap.Error(err))
+		} else {
+			zapLogger.Info("swagger test user ensured", zap.String("phone", "+77015556677"))
+		}
+	}
+
 	h := handler.New(services, cfg, zapLogger)
 
 	mux := http.NewServeMux()

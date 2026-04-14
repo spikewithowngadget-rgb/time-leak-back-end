@@ -75,6 +75,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/admin/ads", h.AdminListAds)
 	mux.HandleFunc("GET /api/v1/admin/testing/otp/latest", h.AdminLatestOTP)
 	mux.HandleFunc("POST /api/v1/admin/testing/auth/access-token", h.AdminTestingAccessToken)
+
+	mux.HandleFunc("DELETE /api/delete/user", h.AdminDeleteUser)
 }
 
 type authRefreshReq struct {
@@ -129,6 +131,10 @@ type adminLoginReq struct {
 
 type testingAccessTokenReq struct {
 	Phone string `json:"phone"`
+}
+
+type deleteUserReq struct {
+	UserID string `json:"user_id"`
 }
 
 type createAdReq struct {
@@ -257,6 +263,8 @@ func (h *Handler) AuthLogin(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusBadRequest, "invalid login payload")
 		case errors.Is(err, service.ErrInvalidCredentials):
 			writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		case errors.Is(err, service.ErrUserInactive):
+			writeErrorJSON(w, http.StatusForbidden, "account deactivated")
 		default:
 			writeErrorJSON(w, http.StatusInternalServerError, "internal")
 		}
@@ -726,6 +734,35 @@ func (h *Handler) AdminListAds(w http.ResponseWriter, r *http.Request) {
 		"data":  ads,
 		"total": len(ads),
 	})
+}
+
+func (h *Handler) AdminDeleteUser(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.adminClaimsFromRequest(w, r); !ok {
+		return
+	}
+
+	var req deleteUserReq
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "bad request")
+		return
+	}
+
+	if strings.TrimSpace(req.UserID) == "" {
+		writeErrorJSON(w, http.StatusBadRequest, "user_id is required")
+		return
+	}
+
+	if err := h.app.DeactivateUser(r.Context(), req.UserID); err != nil {
+		switch {
+		case errors.Is(err, service.ErrUserNotFound):
+			writeErrorJSON(w, http.StatusNotFound, "user not found")
+		default:
+			writeErrorJSON(w, http.StatusInternalServerError, "internal")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deactivated"})
 }
 
 func (h *Handler) AdminLatestOTP(w http.ResponseWriter, r *http.Request) {

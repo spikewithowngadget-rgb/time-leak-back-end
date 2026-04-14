@@ -28,6 +28,7 @@ type User struct {
 	Phone        string    `json:"phone,omitempty"`
 	Password     string    `json:"-"`
 	UserLanguage string    `json:"userLanguage"`
+	IsActive     bool      `json:"isActive"`
 	CreatedAt    time.Time `json:"createdAt"`
 }
 

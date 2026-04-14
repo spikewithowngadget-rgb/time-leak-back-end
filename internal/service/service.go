@@ -39,6 +39,7 @@ type IUserNotesService interface {
 		confirmPassword string,
 		verificationToken string,
 	) error
+	DeactivateUser(ctx context.Context, userID string) error
 }
 
 type IJWTService interface {

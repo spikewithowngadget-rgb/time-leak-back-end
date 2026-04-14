@@ -25,6 +25,7 @@ var (
 	ErrTooManyNoteFiles         = errors.New("too many note files")
 	ErrUserAlreadyExists        = errors.New("user already exists")
 	ErrUserNotFound             = errors.New("user not found")
+	ErrUserInactive             = errors.New("user account is deactivated")
 	ErrInvalidCredentials       = errors.New("invalid credentials")
 	ErrVerificationTokenMissing = errors.New("verification token is required")
 	ErrVerificationNotFound     = errors.New("verification token not found")
@@ -224,11 +225,30 @@ func (s *AppService) LoginByPhonePassword(ctx context.Context, phone, password s
 		return domain.User{}, fmt.Errorf("get user by phone: %w", err)
 	}
 
+	if !user.IsActive {
+		return domain.User{}, ErrUserInactive
+	}
+
 	if !comparePasswordHash(user.Password, password) {
 		return domain.User{}, ErrInvalidCredentials
 	}
 
 	return sanitizeUser(user), nil
+}
+
+func (s *AppService) DeactivateUser(ctx context.Context, userID string) error {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return ErrUserNotFound
+	}
+
+	if err := s.repo.DeactivateUser(ctx, userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("deactivate user: %w", err)
+	}
+	return nil
 }
 
 func (s *AppService) ResetPasswordWithOTP(

@@ -84,15 +84,17 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (domain.U
 	email = normalizeEmail(email)
 	row := r.db.QueryRowContext(
 		ctx,
-		`SELECT id, email, COALESCE(phone, ''), password, user_language, created_at FROM users WHERE email = ?`,
+		`SELECT id, email, COALESCE(phone, ''), password, user_language, COALESCE(is_active, 1), created_at FROM users WHERE email = ?`,
 		email,
 	)
 
 	var user domain.User
 	var createdAt string
-	if err := row.Scan(&user.UserID, &user.Email, &user.Phone, &user.Password, &user.UserLanguage, &createdAt); err != nil {
+	var isActive int
+	if err := row.Scan(&user.UserID, &user.Email, &user.Phone, &user.Password, &user.UserLanguage, &isActive, &createdAt); err != nil {
 		return domain.User{}, err
 	}
+	user.IsActive = isActive != 0
 	user.CreatedAt = parseSQLiteTime(createdAt)
 	return user, nil
 }
@@ -105,15 +107,17 @@ func (r *Repository) GetUserByPhone(ctx context.Context, phone string) (domain.U
 
 	row := r.db.QueryRowContext(
 		ctx,
-		`SELECT id, email, COALESCE(phone, ''), password, user_language, created_at FROM users WHERE phone = ?`,
+		`SELECT id, email, COALESCE(phone, ''), password, user_language, COALESCE(is_active, 1), created_at FROM users WHERE phone = ?`,
 		phone,
 	)
 
 	var user domain.User
 	var createdAt string
-	if err := row.Scan(&user.UserID, &user.Email, &user.Phone, &user.Password, &user.UserLanguage, &createdAt); err != nil {
+	var isActive int
+	if err := row.Scan(&user.UserID, &user.Email, &user.Phone, &user.Password, &user.UserLanguage, &isActive, &createdAt); err != nil {
 		return domain.User{}, err
 	}
+	user.IsActive = isActive != 0
 	user.CreatedAt = parseSQLiteTime(createdAt)
 	return user, nil
 }
@@ -125,15 +129,17 @@ func (r *Repository) GetUserByID(ctx context.Context, userID string) (domain.Use
 
 	row := r.db.QueryRowContext(
 		ctx,
-		`SELECT id, email, COALESCE(phone, ''), password, user_language, created_at FROM users WHERE id = ?`,
+		`SELECT id, email, COALESCE(phone, ''), password, user_language, COALESCE(is_active, 1), created_at FROM users WHERE id = ?`,
 		userID,
 	)
 
 	var user domain.User
 	var createdAt string
-	if err := row.Scan(&user.UserID, &user.Email, &user.Phone, &user.Password, &user.UserLanguage, &createdAt); err != nil {
+	var isActive int
+	if err := row.Scan(&user.UserID, &user.Email, &user.Phone, &user.Password, &user.UserLanguage, &isActive, &createdAt); err != nil {
 		return domain.User{}, err
 	}
+	user.IsActive = isActive != 0
 	user.CreatedAt = parseSQLiteTime(createdAt)
 	return user, nil
 }
@@ -221,6 +227,47 @@ func (r *Repository) UpdateUserPasswordByPhone(ctx context.Context, phone, passw
 		return fmt.Errorf("update user password by phone: %w", err)
 	}
 	return ensureRowsAffected(res)
+}
+
+func (r *Repository) DeactivateUser(ctx context.Context, userID string) error {
+	if _, err := uuid.Parse(strings.TrimSpace(userID)); err != nil {
+		return errors.New("userId must be valid UUID")
+	}
+
+	res, err := r.db.ExecContext(
+		ctx,
+		`UPDATE users SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		userID,
+	)
+	if err != nil {
+		return fmt.Errorf("deactivate user: %w", err)
+	}
+	return ensureRowsAffected(res)
+}
+
+func (r *Repository) SeedUserIfNotExists(ctx context.Context, email, phone, passwordHash, language string) error {
+	email = normalizeEmail(email)
+	phone = normalizePhone(phone)
+	language = normalizeLanguage(language)
+
+	_, err := r.GetUserByPhone(ctx, phone)
+	if err == nil {
+		return nil // already exists
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
+	userID := dbtraits.GenerateUUID()
+	_, execErr := r.db.ExecContext(
+		ctx,
+		`INSERT INTO users (id, email, phone, password, user_language) VALUES (?, ?, ?, ?, ?)`,
+		userID, email, phone, passwordHash, language,
+	)
+	if execErr != nil && strings.Contains(strings.ToLower(execErr.Error()), "unique") {
+		return nil // race condition, already inserted
+	}
+	return execErr
 }
 
 func (r *Repository) CreateNote(ctx context.Context, userID, noteType string, noteFiles []string) (domain.Note, error) {

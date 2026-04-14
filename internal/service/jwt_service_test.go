@@ -265,11 +265,37 @@ func TestJWT_Refresh_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Refresh error: %v", err)
 	}
-	if newPair.AccessToken == "" || newPair.RefreshToken == "" {
-		t.Fatal("expected new token pair")
+	if newPair.AccessToken == "" {
+		t.Fatal("expected new access token")
 	}
-	if !store.revoked[pair.RefreshToken] {
-		t.Fatal("expected old refresh to be revoked")
+	// Refresh token is reused (no rotation) so concurrent refreshes don't race.
+	if newPair.RefreshToken != pair.RefreshToken {
+		t.Fatalf("expected same refresh token to be returned, got different")
+	}
+	if store.revoked[pair.RefreshToken] {
+		t.Fatal("refresh token must NOT be revoked after a successful refresh")
+	}
+}
+
+func TestJWT_Refresh_Idempotent(t *testing.T) {
+	svc, _ := newAuthForTest()
+
+	pair, err := svc.IssueUserTokens(context.Background(), domain.User{UserID: "u-1", Phone: "+77015556677"}, "otp_whatsapp")
+	if err != nil {
+		t.Fatalf("IssueUserTokens error: %v", err)
+	}
+
+	// Simulate two concurrent refresh calls with the same token.
+	p1, err1 := svc.Refresh(context.Background(), pair.RefreshToken)
+	p2, err2 := svc.Refresh(context.Background(), pair.RefreshToken)
+	if err1 != nil {
+		t.Fatalf("first Refresh error: %v", err1)
+	}
+	if err2 != nil {
+		t.Fatalf("second concurrent Refresh error: %v", err2)
+	}
+	if p1.RefreshToken != pair.RefreshToken || p2.RefreshToken != pair.RefreshToken {
+		t.Fatal("both calls should return the same (original) refresh token")
 	}
 }
 
@@ -323,8 +349,9 @@ func TestJWT_Refresh_Expired(t *testing.T) {
 	if !errors.Is(err, ErrRefreshExpired) {
 		t.Fatalf("expected ErrRefreshExpired, got %v", err)
 	}
-	if !store.revoked["r1"] {
-		t.Fatal("expected expired refresh to be revoked")
+	// Expired tokens are rejected but not explicitly revoked (they expire naturally).
+	if store.revoked["r1"] {
+		t.Fatal("expired refresh should not be explicitly revoked")
 	}
 }
 
@@ -340,11 +367,15 @@ func TestJWT_Refresh_AdminSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Refresh error: %v", err)
 	}
-	if newPair.AccessToken == "" || newPair.RefreshToken == "" {
-		t.Fatal("expected refreshed admin token pair")
+	if newPair.AccessToken == "" {
+		t.Fatal("expected refreshed admin access token")
 	}
-	if !store.adminRevoked[adminToken.RefreshToken] {
-		t.Fatal("expected old admin refresh token to be revoked")
+	// Refresh token is reused (no rotation).
+	if newPair.RefreshToken != adminToken.RefreshToken {
+		t.Fatalf("expected same admin refresh token to be returned")
+	}
+	if store.adminRevoked[adminToken.RefreshToken] {
+		t.Fatal("admin refresh token must NOT be revoked after a successful refresh")
 	}
 
 	claims, err := svc.VerifyAdminAccess(newPair.AccessToken)

@@ -257,6 +257,23 @@ func (s *AuthService) signAccessToken(claims AccessClaims, secret []byte) (strin
 	return t.SignedString(secret)
 }
 
+func (s *AuthService) issueUserAccessToken(userUUID, phone, authType, role string) (string, error) {
+	now := time.Now().UTC()
+	claims := AccessClaims{
+		UserUUID: userUUID,
+		Phone:    phone,
+		Role:     role,
+		AuthType: authType,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    s.issuer,
+			Subject:   phone,
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(s.accessTTL)),
+		},
+	}
+	return s.signAccessToken(claims, s.accessSecret)
+}
+
 func (s *AuthService) issueAdminAccessToken(username string) (string, error) {
 	now := time.Now().UTC()
 	claims := AccessClaims{
@@ -347,12 +364,7 @@ func (s *AuthService) Refresh(ctx context.Context, oldRefresh string) (TokenPair
 			return TokenPair{}, ErrRefreshRevoked
 		}
 		if time.Now().After(rec.ExpiresAt) {
-			_ = s.store.Revoke(ctx, oldRefresh)
 			return TokenPair{}, ErrRefreshExpired
-		}
-
-		if err := s.store.Revoke(ctx, oldRefresh); err != nil {
-			return TokenPair{}, err
 		}
 
 		if strings.TrimSpace(rec.AuthType) == "" {
@@ -362,7 +374,14 @@ func (s *AuthService) Refresh(ctx context.Context, oldRefresh string) (TokenPair
 			rec.Role = "user"
 		}
 
-		return s.issueTokens(ctx, rec.UserUUID, normalizePhone(rec.Phone), rec.AuthType, rec.Role)
+		// Issue a new access token but reuse the existing refresh token so that
+		// concurrent refresh calls from the same client all succeed instead of
+		// racing to revoke the token and returning 401.
+		access, err := s.issueUserAccessToken(rec.UserUUID, normalizePhone(rec.Phone), rec.AuthType, rec.Role)
+		if err != nil {
+			return TokenPair{}, err
+		}
+		return TokenPair{AccessToken: access, RefreshToken: oldRefresh}, nil
 	}
 
 	adminRec, err := s.store.GetAdminRefresh(ctx, oldRefresh)
@@ -373,23 +392,15 @@ func (s *AuthService) Refresh(ctx context.Context, oldRefresh string) (TokenPair
 		return TokenPair{}, ErrRefreshRevoked
 	}
 	if time.Now().After(adminRec.ExpiresAt) {
-		_ = s.store.RevokeAdminRefresh(ctx, oldRefresh)
 		return TokenPair{}, ErrRefreshExpired
 	}
 
-	if err := s.store.RevokeAdminRefresh(ctx, oldRefresh); err != nil {
-		return TokenPair{}, err
-	}
-
-	adminToken, err := s.IssueAdminToken(ctx, adminRec.Username)
+	// Reuse the same admin refresh token; only issue a fresh access token.
+	adminAccess, err := s.issueAdminAccessToken(adminRec.Username)
 	if err != nil {
 		return TokenPair{}, err
 	}
-
-	return TokenPair{
-		AccessToken:  adminToken.AccessToken,
-		RefreshToken: adminToken.RefreshToken,
-	}, nil
+	return TokenPair{AccessToken: adminAccess, RefreshToken: oldRefresh}, nil
 }
 
 func newRandomToken(n int) (string, error) {
