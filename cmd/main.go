@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"os"
@@ -71,6 +72,8 @@ func main() {
 		}
 	}
 
+	ensureStaticTestingPhoneBindings(ctx, repos.Auth, zapLogger)
+
 	h := handler.New(services, cfg, zapLogger)
 
 	mux := http.NewServeMux()
@@ -95,5 +98,56 @@ func main() {
 	zapLogger.Info("http server starting", zap.String("addr", cfg.Addr))
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		zapLogger.Error("http server failed", zap.Error(err))
+	}
+}
+
+func ensureStaticTestingPhoneBindings(ctx context.Context, repo *repository.Repository, log *zap.Logger) {
+	for _, contact := range service.StaticTestingPhoneContacts() {
+		if contact.Email == "" {
+			continue
+		}
+
+		user, err := repo.GetUserByEmail(ctx, contact.Email)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			log.Warn(
+				"failed to load testing contact user by email",
+				zap.String("email", contact.Email),
+				zap.String("phone", contact.Phone),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		if user.Phone == contact.Phone {
+			continue
+		}
+		if user.Phone != "" && user.Phone != contact.Phone {
+			log.Warn(
+				"skipping testing phone binding because user already has another phone",
+				zap.String("email", contact.Email),
+				zap.String("existing_phone", user.Phone),
+				zap.String("testing_phone", contact.Phone),
+			)
+			continue
+		}
+
+		if err := repo.UpdateUserPhone(ctx, user.UserID, contact.Phone); err != nil {
+			log.Warn(
+				"failed to bind testing phone to existing user",
+				zap.String("email", contact.Email),
+				zap.String("phone", contact.Phone),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		log.Info(
+			"testing phone bound to existing user",
+			zap.String("email", contact.Email),
+			zap.String("phone", contact.Phone),
+		)
 	}
 }

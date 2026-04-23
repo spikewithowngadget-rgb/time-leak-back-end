@@ -1,0 +1,142 @@
+[
+  {
+    "index": 1,
+    "email": "n1outnt@gmail.com",
+    "name": "Диас",
+    "phone": "+77081234000",
+    "code": "1111"
+  },
+  {
+    "index": 2,
+    "email": "dr.leila96@gmail.com",
+    "name": "Лейла",
+    "phone": "+77081234001",
+    "code": "1234"
+  },
+  {
+    "index": 3,
+    "email": "smaldybekova@gmail.com",
+    "name": "Шолпан",
+    "phone": "+77071234002",
+    "code": "3244"
+  },
+  {
+    "index": 4,
+    "email": "rashenbeksdl@gmail.com",
+    "name": "Рашид",
+    "phone": "+77051234003",
+    "code": "2212"
+  },
+  {
+    "index": 5,
+    "email": "ragozinf1@gmail.com",
+    "name": "Костя",
+    "phone": "+77011234004",
+    "code": "4581"
+  },
+  {
+    "index": 6,
+    "email": "gabitturapov@gmail.com",
+    "name": "Габит",
+    "phone": "+77021234005",
+    "code": "6742"
+  },
+  {
+    "index": 7,
+    "email": "olegrudi734@gmail.com",
+    "name": "Олег",
+    "phone": "+77751234006",
+    "code": "9087"
+  },
+  {
+    "index": 8,
+    "email": "arsentleshov2010@gmail.com",
+    "name": "Арсен",
+    "phone": "+77771234007",
+    "code": "1357"
+  },
+  {
+    "index": 9,
+    "email": "mk2bas@gmail.com",
+    "name": "друг Рашида",
+    "phone": "+77061234008",
+    "code": "2468"
+  },
+  {
+    "index": 10,
+    "email": "darinabotaeva@gmail.com",
+    "name": "друг Рашида",
+    "phone": "+77781234009",
+    "code": "4820"
+  },
+  {
+    "index": 11,
+    "email": "5203036m@gmail.com",
+    "name": "Мухтар",
+    "phone": "+77081234010",
+    "code": "5511"
+  },
+  {
+    "index": 12,
+    "email": "migueltsiert@gmail.com",
+    "name": "Миша",
+    "phone": "+77071234011",
+    "code": "6622"
+  },
+  {
+    "index": 13,
+    "email": "akmaralkarsalova@gmail.com",
+    "name": "друг Рашида",
+    "phone": "+77051234012",
+    "code": "7733"
+  },
+  {
+    "index": 14,
+    "email": "kolkova1975@gmail.com",
+    "name": "друг Рашида",
+    "phone": "+77011234013",
+    "code": "8844"
+  },
+  {
+    "index": 15,
+    "email": "railabystrova59@gmail.com",
+    "name": "друг Рашида",
+    "phone": "+77021234014",
+    "code": "9955"
+  },
+  {
+    "index": 16,
+    "email": "ylg.kaikenova@gmail.com",
+    "name": "друг Рашида",
+    "phone": "+77751234015",
+    "code": "4072"
+  },
+  {
+    "index": 17,
+    "email": "indirar325@gmail.com",
+    "name": "друг Рашида",
+    "phone": "+77771234016",
+    "code": "5183"
+  },
+  {
+    "index": 18,
+    "email": "",
+    "name": "Reserved 18",
+    "phone": "+77061234017",
+    "code": "6294"
+  },
+  {
+    "index": 19,
+    "email": "",
+    "name": "Reserved 19",
+    "phone": "+77781234018",
+    "code": "7305"
+  },
+  {
+    "index": 20,
+    "email": "",
+    "name": "Reserved 20",
+    "phone": "+77471234019",
+    "code": "8416"
+  }
+]

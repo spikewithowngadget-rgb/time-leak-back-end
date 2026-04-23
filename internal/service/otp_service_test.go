@@ -208,3 +208,69 @@ func TestOTP_Verify_AttemptsAndLock(t *testing.T) {
 		t.Fatalf("expected ErrOTPLocked, got %v", err)
 	}
 }
+
+func TestOTP_Request_AppStoreReviewPhoneUsesFixedCode(t *testing.T) {
+	svc, _ := newOTPServiceForTest()
+	ctx := context.Background()
+
+	result, err := svc.RequestOTP(ctx, domain.OTPChannelWhatsApp, appStoreTestPhone)
+	if err != nil {
+		t.Fatalf("RequestOTP error: %v", err)
+	}
+	if result.RequestID == "" {
+		t.Fatal("expected request id")
+	}
+
+	debugCode, err := svc.GetLatestTestingOTP(ctx, domain.OTPChannelWhatsApp, appStoreTestPhone)
+	if err != nil {
+		t.Fatalf("GetLatestTestingOTP error: %v", err)
+	}
+	if debugCode.Code != appStoreTestOTPCode {
+		t.Fatalf("expected app store review code %q got %q", appStoreTestOTPCode, debugCode.Code)
+	}
+
+	verifyResult, err := svc.VerifyOTP(ctx, result.RequestID, appStoreTestOTPCode)
+	if err != nil {
+		t.Fatalf("VerifyOTP error: %v", err)
+	}
+	if verifyResult.Destination != appStoreTestPhone {
+		t.Fatalf("expected destination %q got %q", appStoreTestPhone, verifyResult.Destination)
+	}
+}
+
+func TestStaticTestingPhoneContacts_ExposeTwentyStaticNumbers(t *testing.T) {
+	contacts := StaticTestingPhoneContacts()
+	if len(contacts) != 20 {
+		t.Fatalf("expected 20 static testing contacts, got %d", len(contacts))
+	}
+
+	last := contacts[len(contacts)-1]
+	if last.Phone != "+77471234019" {
+		t.Fatalf("unexpected last static testing phone %q", last.Phone)
+	}
+	if last.Code != "8416" {
+		t.Fatalf("unexpected last static testing code %q", last.Code)
+	}
+}
+
+func TestOTP_Request_AdditionalStaticTestingPhoneUsesConfiguredCode(t *testing.T) {
+	svc, _ := newOTPServiceForTest()
+	ctx := context.Background()
+
+	contact := StaticTestingPhoneContacts()[19]
+	result, err := svc.RequestOTP(ctx, domain.OTPChannelWhatsApp, contact.Phone)
+	if err != nil {
+		t.Fatalf("RequestOTP error: %v", err)
+	}
+	if result.RequestID == "" {
+		t.Fatal("expected request id")
+	}
+
+	debugCode, err := svc.GetLatestTestingOTP(ctx, domain.OTPChannelWhatsApp, contact.Phone)
+	if err != nil {
+		t.Fatalf("GetLatestTestingOTP error: %v", err)
+	}
+	if debugCode.Code != contact.Code {
+		t.Fatalf("expected configured code %q got %q", contact.Code, debugCode.Code)
+	}
+}

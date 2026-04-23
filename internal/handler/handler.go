@@ -76,7 +76,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/admin/testing/otp/latest", h.AdminLatestOTP)
 	mux.HandleFunc("POST /api/v1/admin/testing/auth/access-token", h.AdminTestingAccessToken)
 
-	mux.HandleFunc("DELETE /api/delete/user", h.AdminDeleteUser)
+	mux.HandleFunc("DELETE /api/delete/user", h.UserDeactivate)
 }
 
 type authRefreshReq struct {
@@ -736,8 +736,28 @@ func (h *Handler) AdminListAds(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) UserDeactivate(w http.ResponseWriter, r *http.Request) {
+	claims, ok := h.userClaimsFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	if err := h.app.DeactivateUser(r.Context(), claims.UserUUID); err != nil {
+		switch {
+		case errors.Is(err, service.ErrUserNotFound):
+			writeErrorJSON(w, http.StatusNotFound, "user not found")
+		default:
+			writeErrorJSON(w, http.StatusInternalServerError, "internal")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deactivated"})
+}
+
+
 func (h *Handler) AdminDeleteUser(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.adminClaimsFromRequest(w, r); !ok {
+	if _, ok := h.userClaimsFromRequest(w, r); !ok {
 		return
 	}
 
