@@ -15,13 +15,14 @@ import (
 )
 
 type Handler struct {
-	app   service.IUserNotesService
-	jwt   service.IJWTService
-	otp   service.IOTPService
-	ads   service.IAdsService
-	admin service.IAdminAuthService
-	cfg   *config.Config
-	log   *zap.Logger
+	app      service.IUserNotesService
+	jwt      service.IJWTService
+	otp      service.IOTPService
+	ads      service.IAdsService
+	admin    service.IAdminAuthService
+	security service.ISecurityService
+	cfg      *config.Config
+	log      *zap.Logger
 }
 
 func New(services *service.Services, cfg *config.Config, log *zap.Logger) *Handler {
@@ -34,6 +35,7 @@ func New(services *service.Services, cfg *config.Config, log *zap.Logger) *Handl
 		otp:   services.OTP,
 		ads:   services.Ads,
 		admin: services.Admin,
+		security: services.Security,
 		cfg:   cfg,
 		log:   log,
 	}
@@ -45,6 +47,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /swagger.json", h.SwaggerJSON)
 
 	mux.HandleFunc("POST /api/v1/auth/otp/request", h.AuthOTPRequest)
+	mux.HandleFunc("POST /api/v1/auth/telegram-otp/request", h.AuthTelegramOTPRequest)
 	mux.HandleFunc("POST /api/v1/auth/otp/verify", h.AuthOTPVerify)
 	mux.HandleFunc("POST /api/v1/auth/register", h.AuthRegisterComplete)
 	mux.HandleFunc("POST /api/v1/auth/login", h.AuthLogin)
@@ -73,8 +76,17 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/admin/ads/{id}", h.AdminUpdateAd)
 	mux.HandleFunc("DELETE /api/v1/admin/ads/{id}", h.AdminDeleteAd)
 	mux.HandleFunc("GET /api/v1/admin/ads", h.AdminListAds)
+	mux.HandleFunc("GET /api/v1/admin/users/{id}/devices", h.AdminListUserDevices)
+	mux.HandleFunc("POST /api/v1/admin/users/{id}/devices/{device_id}/deactivate", h.AdminDeactivateUserDevice)
+	mux.HandleFunc("GET /api/v1/admin/users/{id}/locations", h.AdminListUserLocations)
+	mux.HandleFunc("GET /api/v1/admin/auth-events", h.AdminListAuthEvents)
+	mux.HandleFunc("GET /api/v1/admin/telegram-otp/sessions", h.AdminListTelegramOTPSessions)
+	mux.HandleFunc("GET /api/v1/admin/telegram-otp/sessions/{request_id}", h.AdminGetTelegramOTPSession)
 	mux.HandleFunc("GET /api/v1/admin/testing/otp/latest", h.AdminLatestOTP)
 	mux.HandleFunc("POST /api/v1/admin/testing/auth/access-token", h.AdminTestingAccessToken)
+	mux.HandleFunc("POST /api/v1/internal/telegram-otp/open", h.InternalTelegramOTPOpen)
+	mux.HandleFunc("POST /api/v1/internal/telegram-otp/send-code", h.InternalTelegramOTPSendCode)
+	mux.HandleFunc("POST /api/v1/internal/telegram-otp/cancel", h.InternalTelegramOTPCancel)
 
 	mux.HandleFunc("DELETE /api/delete/user", h.UserDeactivate)
 }
@@ -110,11 +122,16 @@ type authRegisterCompleteReq struct {
 	Password          string `json:"password"`
 	ConfirmPassword   string `json:"confirm_password"`
 	VerificationToken string `json:"verification_token"`
+	Device            *service.AuthDeviceInput   `json:"device,omitempty"`
+	Location          *service.AuthLocationInput `json:"location,omitempty"`
 }
 
 type authLoginReq struct {
-	Phone    string `json:"phone"`
-	Password string `json:"password"`
+	Phone             string                    `json:"phone"`
+	Password          string                    `json:"password"`
+	VerificationToken string                    `json:"verification_token,omitempty"`
+	Device            *service.AuthDeviceInput   `json:"device,omitempty"`
+	Location          *service.AuthLocationInput `json:"location,omitempty"`
 }
 
 type authResetPasswordConfirmReq struct {
@@ -122,6 +139,8 @@ type authResetPasswordConfirmReq struct {
 	NewPassword       string `json:"new_password"`
 	ConfirmPassword   string `json:"confirm_password"`
 	VerificationToken string `json:"verification_token"`
+	Device            *service.AuthDeviceInput   `json:"device,omitempty"`
+	Location          *service.AuthLocationInput `json:"location,omitempty"`
 }
 
 type adminLoginReq struct {
@@ -151,6 +170,28 @@ type updateAdReq struct {
 	IsActive  *bool   `json:"is_active"`
 }
 
+type telegramOTPRequestReq struct {
+	Phone    string                     `json:"phone"`
+	Purpose  string                     `json:"purpose"`
+	Device   *service.AuthDeviceInput   `json:"device,omitempty"`
+	Location *service.AuthLocationInput `json:"location,omitempty"`
+}
+
+type internalTelegramOTPOpenReq struct {
+	DeepLinkToken    string `json:"deep_link_token"`
+	TelegramUserID   int64  `json:"telegram_user_id"`
+	TelegramChatID   int64  `json:"telegram_chat_id"`
+	TelegramUsername string `json:"telegram_username,omitempty"`
+	FirstName        string `json:"first_name,omitempty"`
+	LastName         string `json:"last_name,omitempty"`
+}
+
+type internalTelegramOTPSendCodeReq struct {
+	RequestID      string `json:"request_id"`
+	TelegramUserID int64  `json:"telegram_user_id"`
+	ContactPhone   string `json:"contact_phone,omitempty"`
+}
+
 func (h *Handler) AuthOTPRequest(w http.ResponseWriter, r *http.Request) {
 	var req otpRequestReq
 	if err := decodeJSONBody(r, &req); err != nil {
@@ -158,7 +199,7 @@ func (h *Handler) AuthOTPRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.otp.RequestOTP(r.Context(), domain.OTPChannelWhatsApp, req.Phone)
+	result, err := h.otp.RequestOTPForPurpose(r.Context(), domain.OTPChannelWhatsApp, req.Phone, domain.AuthVerificationPurposeRegistration)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidOTPDestination):
@@ -198,9 +239,15 @@ func (h *Handler) AuthOTPVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if verifyResult.Purpose != domain.AuthVerificationPurposeRegistration &&
+		verifyResult.Purpose != domain.AuthVerificationPurposeLogin {
+		writeErrorJSON(w, http.StatusBadRequest, "otp verification failed")
+		return
+	}
+
 	verification, err := h.app.CreateAuthVerification(
 		r.Context(),
-		domain.AuthVerificationPurposeRegistration,
+		verifyResult.Purpose,
 		req.RequestID,
 		verifyResult.Destination,
 	)
@@ -214,6 +261,7 @@ func (h *Handler) AuthOTPVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_ = h.security.MarkTelegramOTPVerified(r.Context(), req.RequestID)
 	writeJSON(w, http.StatusOK, verification)
 }
 
@@ -230,6 +278,9 @@ func (h *Handler) AuthRegisterComplete(w http.ResponseWriter, r *http.Request) {
 		req.Password,
 		req.ConfirmPassword,
 		req.VerificationToken,
+		req.Device,
+		req.Location,
+		requestAuthContext(r),
 	)
 	if err != nil {
 		switch {
@@ -256,7 +307,15 @@ func (h *Handler) AuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.app.LoginByPhonePassword(r.Context(), req.Phone, req.Password)
+	user, err := h.app.LoginByPhonePassword(
+		r.Context(),
+		req.Phone,
+		req.Password,
+		req.VerificationToken,
+		req.Device,
+		req.Location,
+		requestAuthContext(r),
+	)
 	if err != nil {
 		switch {
 		case isAuthValidationError(err):
@@ -292,7 +351,7 @@ func (h *Handler) AuthPasswordResetOTPRequest(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	result, err := h.otp.RequestOTP(r.Context(), domain.OTPChannelWhatsApp, req.Phone)
+	result, err := h.otp.RequestOTPForPurpose(r.Context(), domain.OTPChannelWhatsApp, req.Phone, domain.AuthVerificationPurposePasswordReset)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidOTPDestination):
@@ -332,6 +391,11 @@ func (h *Handler) AuthPasswordResetOTPVerify(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if verifyResult.Purpose != domain.AuthVerificationPurposePasswordReset {
+		writeErrorJSON(w, http.StatusBadRequest, "otp verification failed")
+		return
+	}
+
 	verification, err := h.app.CreateAuthVerification(
 		r.Context(),
 		domain.AuthVerificationPurposePasswordReset,
@@ -348,6 +412,7 @@ func (h *Handler) AuthPasswordResetOTPVerify(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	_ = h.security.MarkTelegramOTPVerified(r.Context(), req.RequestID)
 	writeJSON(w, http.StatusOK, verification)
 }
 
@@ -364,6 +429,9 @@ func (h *Handler) AuthPasswordResetConfirm(w http.ResponseWriter, r *http.Reques
 		req.NewPassword,
 		req.ConfirmPassword,
 		req.VerificationToken,
+		req.Device,
+		req.Location,
+		requestAuthContext(r),
 	); err != nil {
 		switch {
 		case isAuthValidationError(err), isVerificationError(err):
@@ -391,7 +459,8 @@ func (h *Handler) AuthRefresh(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, service.ErrRefreshNotFound),
 			errors.Is(err, service.ErrRefreshRevoked),
-			errors.Is(err, service.ErrRefreshExpired):
+			errors.Is(err, service.ErrRefreshExpired),
+			errors.Is(err, service.ErrRefreshInactive):
 			writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
 		default:
 			writeErrorJSON(w, http.StatusInternalServerError, "internal")
@@ -797,7 +866,20 @@ func (h *Handler) AdminLatestOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	otpCode, err := h.otp.GetLatestTestingOTP(r.Context(), domain.OTPChannelWhatsApp, phone)
+	channel := domain.OTPChannelWhatsApp
+	if raw := strings.TrimSpace(r.URL.Query().Get("channel")); raw != "" {
+		switch strings.ToLower(raw) {
+		case string(domain.OTPChannelWhatsApp):
+			channel = domain.OTPChannelWhatsApp
+		case string(domain.OTPChannelTelegram):
+			channel = domain.OTPChannelTelegram
+		default:
+			writeErrorJSON(w, http.StatusBadRequest, "invalid channel")
+			return
+		}
+	}
+
+	otpCode, err := h.otp.GetLatestTestingOTP(r.Context(), channel, phone)
 	if err != nil {
 		if errors.Is(err, service.ErrOTPTestingCodeNotFound) {
 			writeErrorJSON(w, http.StatusNotFound, "otp not found")

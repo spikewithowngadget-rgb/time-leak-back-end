@@ -44,12 +44,14 @@ type OTPChannel string
 
 const (
 	OTPChannelWhatsApp OTPChannel = "whatsapp"
+	OTPChannelTelegram OTPChannel = "telegram"
 )
 
 type OTPRequest struct {
 	ID          string
 	Channel     OTPChannel
 	Destination string
+	Purpose     AuthVerificationPurpose
 	CodeHash    string
 	ExpiresAt   time.Time
 	UsedAt      *time.Time
@@ -75,12 +77,14 @@ type OTPRequestResult struct {
 type OTPVerifyResult struct {
 	Channel     OTPChannel
 	Destination string
+	Purpose     AuthVerificationPurpose
 }
 
 type AuthVerificationPurpose string
 
 const (
 	AuthVerificationPurposeRegistration  AuthVerificationPurpose = "registration"
+	AuthVerificationPurposeLogin         AuthVerificationPurpose = "login"
 	AuthVerificationPurposePasswordReset AuthVerificationPurpose = "password_reset"
 )
 

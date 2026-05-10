@@ -171,6 +171,9 @@ func (s *AppService) RegisterWithPhoneOTP(
 	password string,
 	confirmPassword string,
 	verificationToken string,
+	device *AuthDeviceInput,
+	location *AuthLocationInput,
+	reqCtx AuthRequestContext,
 ) (domain.User, error) {
 	normalizedPhone, err := validatePhoneStrict(phone)
 	if err != nil {
@@ -181,7 +184,8 @@ func (s *AppService) RegisterWithPhoneOTP(
 		return domain.User{}, err
 	}
 
-	if err := s.consumeAuthVerification(ctx, verificationToken, domain.AuthVerificationPurposeRegistration, normalizedPhone); err != nil {
+	verification, err := s.consumeAuthVerification(ctx, verificationToken, domain.AuthVerificationPurposeRegistration, normalizedPhone)
+	if err != nil {
 		return domain.User{}, err
 	}
 
@@ -204,10 +208,20 @@ func (s *AppService) RegisterWithPhoneOTP(
 		return domain.User{}, fmt.Errorf("create user with phone: %w", err)
 	}
 
+	_ = s.persistAuthContext(ctx, created.UserID, created.Phone, verification.RequestID, "register_success", device, location, reqCtx)
+
 	return sanitizeUser(created), nil
 }
 
-func (s *AppService) LoginByPhonePassword(ctx context.Context, phone, password string) (domain.User, error) {
+func (s *AppService) LoginByPhonePassword(
+	ctx context.Context,
+	phone string,
+	password string,
+	verificationToken string,
+	device *AuthDeviceInput,
+	location *AuthLocationInput,
+	reqCtx AuthRequestContext,
+) (domain.User, error) {
 	normalizedPhone, err := validatePhoneStrict(phone)
 	if err != nil {
 		return domain.User{}, err
@@ -220,18 +234,52 @@ func (s *AppService) LoginByPhonePassword(ctx context.Context, phone, password s
 	user, err := s.repo.GetUserByPhone(ctx, normalizedPhone)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			_ = s.repo.CreateAuthEvent(ctx, domain.AuthEvent{
+				Phone:       normalizedPhone,
+				EventType:   "login_failed",
+				IPAddress:   reqCtx.IPAddress,
+				UserAgent:   reqCtx.UserAgent,
+				MetadataJSON: marshalJSON(map[string]any{"reason": "user_not_found"}),
+			})
 			return domain.User{}, ErrInvalidCredentials
 		}
 		return domain.User{}, fmt.Errorf("get user by phone: %w", err)
 	}
 
+	var verificationRequestID string
+	if strings.TrimSpace(verificationToken) != "" {
+		verification, verifyErr := s.consumeAuthVerification(ctx, verificationToken, domain.AuthVerificationPurposeLogin, normalizedPhone)
+		if verifyErr != nil {
+			return domain.User{}, verifyErr
+		}
+		verificationRequestID = verification.RequestID
+	}
+
 	if !user.IsActive {
+		_ = s.repo.CreateAuthEvent(ctx, domain.AuthEvent{
+			UserID:       user.UserID,
+			Phone:        normalizedPhone,
+			EventType:    "login_failed",
+			IPAddress:    reqCtx.IPAddress,
+			UserAgent:    reqCtx.UserAgent,
+			MetadataJSON: marshalJSON(map[string]any{"reason": "user_inactive"}),
+		})
 		return domain.User{}, ErrUserInactive
 	}
 
 	if !comparePasswordHash(user.Password, password) {
+		_ = s.repo.CreateAuthEvent(ctx, domain.AuthEvent{
+			UserID:       user.UserID,
+			Phone:        normalizedPhone,
+			EventType:    "login_failed",
+			IPAddress:    reqCtx.IPAddress,
+			UserAgent:    reqCtx.UserAgent,
+			MetadataJSON: marshalJSON(map[string]any{"reason": "invalid_password"}),
+		})
 		return domain.User{}, ErrInvalidCredentials
 	}
+
+	_ = s.persistAuthContext(ctx, user.UserID, user.Phone, verificationRequestID, "login_success", device, location, reqCtx)
 
 	return sanitizeUser(user), nil
 }
@@ -248,6 +296,9 @@ func (s *AppService) DeactivateUser(ctx context.Context, userID string) error {
 		}
 		return fmt.Errorf("deactivate user: %w", err)
 	}
+	if err := s.repo.RevokeAllUserRefreshTokens(ctx, userID); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -257,6 +308,9 @@ func (s *AppService) ResetPasswordWithOTP(
 	newPassword string,
 	confirmPassword string,
 	verificationToken string,
+	device *AuthDeviceInput,
+	location *AuthLocationInput,
+	reqCtx AuthRequestContext,
 ) error {
 	normalizedPhone, err := validatePhoneStrict(phone)
 	if err != nil {
@@ -267,7 +321,8 @@ func (s *AppService) ResetPasswordWithOTP(
 		return err
 	}
 
-	if err := s.consumeAuthVerification(ctx, verificationToken, domain.AuthVerificationPurposePasswordReset, normalizedPhone); err != nil {
+	verification, err := s.consumeAuthVerification(ctx, verificationToken, domain.AuthVerificationPurposePasswordReset, normalizedPhone)
+	if err != nil {
 		return err
 	}
 
@@ -283,6 +338,11 @@ func (s *AppService) ResetPasswordWithOTP(
 		return fmt.Errorf("update user password: %w", err)
 	}
 
+	user, err := s.repo.GetUserByPhone(ctx, normalizedPhone)
+	if err == nil {
+		_ = s.persistAuthContext(ctx, user.UserID, normalizedPhone, verification.RequestID, "password_reset_success", device, location, reqCtx)
+	}
+
 	return nil
 }
 
@@ -291,50 +351,52 @@ func (s *AppService) consumeAuthVerification(
 	verificationToken string,
 	purpose domain.AuthVerificationPurpose,
 	phone string,
-) error {
+) (domain.AuthVerification, error) {
 	purpose = normalizeAuthVerificationPurpose(purpose)
 	verificationToken = strings.TrimSpace(verificationToken)
 	if verificationToken == "" {
-		return ErrVerificationTokenMissing
+		return domain.AuthVerification{}, ErrVerificationTokenMissing
 	}
 
 	verification, err := s.repo.GetAuthVerificationByID(ctx, verificationToken)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return ErrVerificationNotFound
+			return domain.AuthVerification{}, ErrVerificationNotFound
 		}
-		return err
+		return domain.AuthVerification{}, err
 	}
 
 	if verification.UsedAt != nil {
-		return ErrVerificationAlreadyUsed
+		return domain.AuthVerification{}, ErrVerificationAlreadyUsed
 	}
 
 	if time.Now().UTC().After(verification.ExpiresAt) {
-		return ErrVerificationExpired
+		return domain.AuthVerification{}, ErrVerificationExpired
 	}
 
 	if verification.Purpose != purpose {
-		return ErrVerificationInvalid
+		return domain.AuthVerification{}, ErrVerificationInvalid
 	}
 	if normalizePhone(verification.Phone) != phone {
-		return ErrVerificationInvalid
+		return domain.AuthVerification{}, ErrVerificationInvalid
 	}
 
 	if err := s.repo.MarkAuthVerificationUsed(ctx, verification.ID, time.Now().UTC()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return ErrVerificationAlreadyUsed
+			return domain.AuthVerification{}, ErrVerificationAlreadyUsed
 		}
-		return err
+		return domain.AuthVerification{}, err
 	}
 
-	return nil
+	return verification, nil
 }
 
 func normalizeAuthVerificationPurpose(purpose domain.AuthVerificationPurpose) domain.AuthVerificationPurpose {
 	switch strings.TrimSpace(strings.ToLower(string(purpose))) {
 	case string(domain.AuthVerificationPurposeRegistration):
 		return domain.AuthVerificationPurposeRegistration
+	case string(domain.AuthVerificationPurposeLogin):
+		return domain.AuthVerificationPurposeLogin
 	case string(domain.AuthVerificationPurposePasswordReset):
 		return domain.AuthVerificationPurposePasswordReset
 	default:
@@ -360,4 +422,132 @@ func pseudoEmailFromPhone(phone string) string {
 func sanitizeUser(user domain.User) domain.User {
 	user.Password = ""
 	return user
+}
+
+func (s *AppService) ListUserDevices(ctx context.Context, userID string) ([]domain.UserDevice, error) {
+	return s.repo.ListUserDevicesByUserID(ctx, userID)
+}
+
+func (s *AppService) DeactivateUserDevice(ctx context.Context, userID, deviceID string) error {
+	return s.repo.DeactivateUserDevice(ctx, userID, deviceID)
+}
+
+func (s *AppService) ListUserLocationEvents(ctx context.Context, filter domain.UserLocationListFilter) ([]domain.UserLocationEvent, error) {
+	return s.repo.ListUserLocationEvents(ctx, filter)
+}
+
+func (s *AppService) ListAuthEvents(ctx context.Context, filter domain.AuthEventListFilter) ([]domain.AuthEvent, error) {
+	return s.repo.ListAuthEvents(ctx, filter)
+}
+
+func (s *AppService) persistAuthContext(
+	ctx context.Context,
+	userID string,
+	phone string,
+	requestID string,
+	eventType string,
+	device *AuthDeviceInput,
+	location *AuthLocationInput,
+	reqCtx AuthRequestContext,
+) error {
+	resolvedDevice, resolvedLocation, err := s.resolveAuthContext(ctx, requestID, device, location)
+	if err != nil {
+		return err
+	}
+
+	if resolvedDevice != nil {
+		if _, err := s.repo.UpsertUserDevice(ctx, domain.UserDevice{
+			UserID:       userID,
+			Phone:        phone,
+			DeviceID:     resolvedDevice.DeviceID,
+			Platform:     string(resolvedDevice.Platform),
+			AppVersion:   resolvedDevice.AppVersion,
+			OSVersion:    resolvedDevice.OSVersion,
+			DeviceModel:  resolvedDevice.DeviceModel,
+			Manufacturer: resolvedDevice.Manufacturer,
+			PushToken:    resolvedDevice.PushToken,
+		}); err != nil {
+			return err
+		}
+	}
+
+	if resolvedLocation != nil {
+		deviceID := ""
+		if resolvedDevice != nil {
+			deviceID = resolvedDevice.DeviceID
+		}
+		if err := s.repo.CreateUserLocationEvent(ctx, domain.UserLocationEvent{
+			UserID:         userID,
+			Phone:          phone,
+			DeviceID:       deviceID,
+			EventType:      authEventTypeToLocationType(eventType),
+			Latitude:       ptrFloat64(resolvedLocation.Latitude),
+			Longitude:      ptrFloat64(resolvedLocation.Longitude),
+			AccuracyMeters: resolvedLocation.AccuracyMeters,
+			Source:         string(resolvedLocation.Source),
+			IPAddress:      reqCtx.IPAddress,
+			UserAgent:      reqCtx.UserAgent,
+		}); err != nil {
+			return err
+		}
+	}
+
+	authEvent := domain.AuthEvent{
+		UserID:       userID,
+		Phone:        phone,
+		EventType:    eventType,
+		IPAddress:    reqCtx.IPAddress,
+		UserAgent:    reqCtx.UserAgent,
+		MetadataJSON: metadataWithRequestID(requestID, nil),
+	}
+	if resolvedDevice != nil {
+		authEvent.DeviceID = resolvedDevice.DeviceID
+	}
+	return s.repo.CreateAuthEvent(ctx, authEvent)
+}
+
+func (s *AppService) resolveAuthContext(
+	ctx context.Context,
+	requestID string,
+	device *AuthDeviceInput,
+	location *AuthLocationInput,
+) (*domain.AuthDevice, *domain.AuthLocation, error) {
+	resolvedDevice, err := normalizeDeviceInput(device)
+	if err != nil {
+		return nil, nil, err
+	}
+	resolvedLocation, err := normalizeLocationInput(location)
+	if err != nil {
+		return nil, nil, err
+	}
+	if resolvedDevice != nil || resolvedLocation != nil || strings.TrimSpace(requestID) == "" {
+		return resolvedDevice, resolvedLocation, nil
+	}
+
+	session, err := s.repo.GetTelegramOTPSessionByRequestID(ctx, requestID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	return session.Device, session.Location, nil
+}
+
+func authEventTypeToLocationType(eventType string) string {
+	switch eventType {
+	case "register_success":
+		return "register"
+	case "login_success":
+		return "login"
+	case "password_reset_success":
+		return "password_reset"
+	default:
+		return "manual_update"
+	}
+}
+
+func ptrFloat64(value float64) *float64 {
+	out := value
+	return &out
 }

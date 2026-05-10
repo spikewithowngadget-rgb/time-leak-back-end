@@ -2,8 +2,10 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -508,8 +510,10 @@ func (r *Repository) Save(ctx context.Context, token string, rec domain.RefreshR
 
 	_, err := r.db.ExecContext(
 		ctx,
-		`INSERT INTO refresh_tokens (token, user_id, email, auth_type, role, expires_at, revoked) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		token,
+		`INSERT INTO refresh_token_sessions (id, token_hash, user_id, phone, auth_type, role, expires_at, revoked)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		dbtraits.GenerateUUID(),
+		hashOpaqueToken(token),
 		rec.UserUUID,
 		phone,
 		strings.TrimSpace(rec.AuthType),
@@ -531,8 +535,9 @@ func (r *Repository) Get(ctx context.Context, token string) (domain.RefreshRecor
 
 	row := r.db.QueryRowContext(
 		ctx,
-		`SELECT user_id, email, COALESCE(auth_type, 'otp_whatsapp'), COALESCE(role, 'user'), expires_at, revoked FROM refresh_tokens WHERE token = ?`,
-		token,
+		`SELECT user_id, phone, COALESCE(auth_type, 'otp_whatsapp'), COALESCE(role, 'user'), expires_at, revoked
+		 FROM refresh_token_sessions WHERE token_hash = ?`,
+		hashOpaqueToken(token),
 	)
 
 	var (
@@ -540,11 +545,25 @@ func (r *Repository) Get(ctx context.Context, token string) (domain.RefreshRecor
 		expiresAt string
 		revoked   int
 	)
-	if err := row.Scan(&rec.UserUUID, &rec.Phone, &rec.AuthType, &rec.Role, &expiresAt, &revoked); err != nil {
+	if err := row.Scan(&rec.UserUUID, &rec.Phone, &rec.AuthType, &rec.Role, &expiresAt, &revoked); err == nil {
+		rec.Phone = normalizePhone(rec.Phone)
+		rec.ExpiresAt = parseSQLiteTime(expiresAt)
+		rec.Revoked = revoked != 0
+		return rec, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return domain.RefreshRecord{}, err
+	}
+
+	legacyRow := r.db.QueryRowContext(
+		ctx,
+		`SELECT user_id, email, COALESCE(auth_type, 'otp_whatsapp'), COALESCE(role, 'user'), expires_at, revoked
+		 FROM refresh_tokens WHERE token = ?`,
+		token,
+	)
+	if err := legacyRow.Scan(&rec.UserUUID, &rec.Phone, &rec.AuthType, &rec.Role, &expiresAt, &revoked); err != nil {
 		return domain.RefreshRecord{}, err
 	}
 	rec.Phone = normalizePhone(rec.Phone)
-
 	rec.ExpiresAt = parseSQLiteTime(expiresAt)
 	rec.Revoked = revoked != 0
 	return rec, nil
@@ -556,12 +575,24 @@ func (r *Repository) Revoke(ctx context.Context, token string) error {
 		return sql.ErrNoRows
 	}
 
-	res, err := r.db.ExecContext(ctx, `UPDATE refresh_tokens SET revoked = 1 WHERE token = ?`, token)
+	res, err := r.db.ExecContext(
+		ctx,
+		`UPDATE refresh_token_sessions SET revoked = 1, revoked_at = ? WHERE token_hash = ?`,
+		time.Now().UTC().Format(time.RFC3339Nano),
+		hashOpaqueToken(token),
+	)
 	if err != nil {
 		return err
 	}
+	if err := ensureRowsAffected(res); err == nil {
+		return nil
+	}
 
-	return ensureRowsAffected(res)
+	legacyRes, legacyErr := r.db.ExecContext(ctx, `UPDATE refresh_tokens SET revoked = 1 WHERE token = ?`, token)
+	if legacyErr != nil {
+		return legacyErr
+	}
+	return ensureRowsAffected(legacyRes)
 }
 
 func (r *Repository) SaveAdminRefresh(ctx context.Context, token string, rec domain.AdminRefreshRecord) error {
@@ -576,8 +607,10 @@ func (r *Repository) SaveAdminRefresh(ctx context.Context, token string, rec dom
 
 	_, err := r.db.ExecContext(
 		ctx,
-		`INSERT INTO admin_refresh_tokens (token, username, expires_at, revoked) VALUES (?, ?, ?, ?)`,
-		token,
+		`INSERT INTO admin_refresh_token_sessions (id, token_hash, username, expires_at, revoked)
+		 VALUES (?, ?, ?, ?, ?)`,
+		dbtraits.GenerateUUID(),
+		hashOpaqueToken(token),
 		username,
 		rec.ExpiresAt.UTC().Format(time.RFC3339Nano),
 		boolToInt(rec.Revoked),
@@ -596,8 +629,8 @@ func (r *Repository) GetAdminRefresh(ctx context.Context, token string) (domain.
 
 	row := r.db.QueryRowContext(
 		ctx,
-		`SELECT username, expires_at, revoked FROM admin_refresh_tokens WHERE token = ?`,
-		token,
+		`SELECT username, expires_at, revoked FROM admin_refresh_token_sessions WHERE token_hash = ?`,
+		hashOpaqueToken(token),
 	)
 
 	var (
@@ -605,10 +638,23 @@ func (r *Repository) GetAdminRefresh(ctx context.Context, token string) (domain.
 		expiresAt string
 		revoked   int
 	)
-	if err := row.Scan(&rec.Username, &expiresAt, &revoked); err != nil {
+	if err := row.Scan(&rec.Username, &expiresAt, &revoked); err == nil {
+		rec.Username = strings.TrimSpace(rec.Username)
+		rec.ExpiresAt = parseSQLiteTime(expiresAt)
+		rec.Revoked = revoked != 0
+		return rec, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return domain.AdminRefreshRecord{}, err
 	}
 
+	legacyRow := r.db.QueryRowContext(
+		ctx,
+		`SELECT username, expires_at, revoked FROM admin_refresh_tokens WHERE token = ?`,
+		token,
+	)
+	if err := legacyRow.Scan(&rec.Username, &expiresAt, &revoked); err != nil {
+		return domain.AdminRefreshRecord{}, err
+	}
 	rec.Username = strings.TrimSpace(rec.Username)
 	rec.ExpiresAt = parseSQLiteTime(expiresAt)
 	rec.Revoked = revoked != 0
@@ -621,12 +667,24 @@ func (r *Repository) RevokeAdminRefresh(ctx context.Context, token string) error
 		return sql.ErrNoRows
 	}
 
-	res, err := r.db.ExecContext(ctx, `UPDATE admin_refresh_tokens SET revoked = 1 WHERE token = ?`, token)
+	res, err := r.db.ExecContext(
+		ctx,
+		`UPDATE admin_refresh_token_sessions SET revoked = 1, revoked_at = ? WHERE token_hash = ?`,
+		time.Now().UTC().Format(time.RFC3339Nano),
+		hashOpaqueToken(token),
+	)
 	if err != nil {
 		return err
 	}
+	if err := ensureRowsAffected(res); err == nil {
+		return nil
+	}
 
-	return ensureRowsAffected(res)
+	legacyRes, legacyErr := r.db.ExecContext(ctx, `UPDATE admin_refresh_tokens SET revoked = 1 WHERE token = ?`, token)
+	if legacyErr != nil {
+		return legacyErr
+	}
+	return ensureRowsAffected(legacyRes)
 }
 
 func (r *Repository) CreateOTPRequest(
@@ -634,6 +692,7 @@ func (r *Repository) CreateOTPRequest(
 	requestID string,
 	channel domain.OTPChannel,
 	destination string,
+	purpose domain.AuthVerificationPurpose,
 	codeHash string,
 	expiresAt time.Time,
 	maxAttempts int,
@@ -646,13 +705,18 @@ func (r *Repository) CreateOTPRequest(
 	if destination == "" {
 		return domain.OTPRequest{}, errors.New("destination is empty")
 	}
+	purposeRaw := normalizeVerificationPurpose(purpose)
+	if purposeRaw == "" {
+		purposeRaw = string(domain.AuthVerificationPurposeRegistration)
+	}
 
 	_, err := r.db.ExecContext(
 		ctx,
-		`INSERT INTO otp_requests (id, channel, destination, code_hash, expires_at, max_attempts) VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO otp_requests (id, channel, destination, purpose, code_hash, expires_at, max_attempts) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		requestID,
 		string(channel),
 		destination,
+		purposeRaw,
 		codeHash,
 		expiresAt.UTC().Format(time.RFC3339Nano),
 		maxAttempts,
@@ -667,7 +731,7 @@ func (r *Repository) CreateOTPRequest(
 func (r *Repository) GetOTPRequestByID(ctx context.Context, requestID string) (domain.OTPRequest, error) {
 	row := r.db.QueryRowContext(
 		ctx,
-		`SELECT id, channel, destination, code_hash, expires_at, used_at, attempts, max_attempts, created_at, last_attempt_at
+		`SELECT id, channel, destination, COALESCE(purpose, 'registration'), code_hash, expires_at, used_at, attempts, max_attempts, created_at, last_attempt_at
 		 FROM otp_requests WHERE id = ?`,
 		strings.TrimSpace(requestID),
 	)
@@ -681,6 +745,7 @@ func (r *Repository) GetOTPRequestByID(ctx context.Context, requestID string) (d
 		&req.ID,
 		&req.Channel,
 		&req.Destination,
+		&req.Purpose,
 		&req.CodeHash,
 		&expiresAt,
 		&usedAt,
@@ -713,7 +778,7 @@ func (r *Repository) GetLatestOTPRequestByDestination(
 ) (domain.OTPRequest, error) {
 	row := r.db.QueryRowContext(
 		ctx,
-		`SELECT id, channel, destination, code_hash, expires_at, used_at, attempts, max_attempts, created_at, last_attempt_at
+		`SELECT id, channel, destination, COALESCE(purpose, 'registration'), code_hash, expires_at, used_at, attempts, max_attempts, created_at, last_attempt_at
 		 FROM otp_requests
 		 WHERE channel = ? AND destination = ?
 		 ORDER BY created_at DESC
@@ -731,6 +796,7 @@ func (r *Repository) GetLatestOTPRequestByDestination(
 		&req.ID,
 		&req.Channel,
 		&req.Destination,
+		&req.Purpose,
 		&req.CodeHash,
 		&expiresAt,
 		&usedAt,
@@ -1117,6 +1183,44 @@ func (r *Repository) getAdByID(ctx context.Context, id string) (domain.Ad, error
 
 func normalizeEmail(email string) string {
 	return strings.TrimSpace(strings.ToLower(email))
+}
+
+func (r *Repository) RevokeAllUserRefreshTokens(ctx context.Context, userID string) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := r.db.ExecContext(
+		ctx,
+		`UPDATE refresh_token_sessions SET revoked = 1, revoked_at = ? WHERE user_id = ? AND revoked = 0`,
+		now,
+		strings.TrimSpace(userID),
+	); err != nil {
+		return fmt.Errorf("revoke hashed refresh tokens: %w", err)
+	}
+	if _, err := r.db.ExecContext(
+		ctx,
+		`UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ? AND revoked = 0`,
+		strings.TrimSpace(userID),
+	); err != nil {
+		return fmt.Errorf("revoke legacy refresh tokens: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) IsUserActive(ctx context.Context, userID string) (bool, error) {
+	row := r.db.QueryRowContext(
+		ctx,
+		`SELECT COALESCE(is_active, 1) FROM users WHERE id = ?`,
+		strings.TrimSpace(userID),
+	)
+	var isActive int
+	if err := row.Scan(&isActive); err != nil {
+		return false, err
+	}
+	return isActive != 0, nil
+}
+
+func hashOpaqueToken(raw string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(raw)))
+	return hex.EncodeToString(sum[:])
 }
 
 func normalizePhone(phone string) string {

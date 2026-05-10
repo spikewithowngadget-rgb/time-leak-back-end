@@ -31,6 +31,14 @@ type AdminConfig struct {
 	Password string
 }
 
+type TelegramOTPConfig struct {
+	BotUsername         string
+	TokenSecret         string
+	ExpiresIn           time.Duration
+	RequireContactMatch bool
+	InternalBotSecret   string
+}
+
 type Config struct {
 	Addr                   string
 	DBPath                 string
@@ -40,8 +48,10 @@ type Config struct {
 	MaxIdleConns           int
 	ConnMaxLifetime        time.Duration
 	EnableTestingEndpoints bool
+	AppEnv                 string
 	JWT                    JWTConfig
 	OTP                    OTPConfig
+	TelegramOTP            TelegramOTPConfig
 	Admin                  AdminConfig
 }
 
@@ -73,6 +83,14 @@ func NewConfig() (*Config, error) {
 			Username: "Admin",
 			Password: "QRT123",
 		},
+		TelegramOTP: TelegramOTPConfig{
+			BotUsername:         "",
+			TokenSecret:         "change-me-telegram-otp",
+			ExpiresIn:           5 * time.Minute,
+			RequireContactMatch: false,
+			InternalBotSecret:   "",
+		},
+		AppEnv:                 "development",
 		EnableTestingEndpoints: false,
 	}
 
@@ -172,6 +190,32 @@ func NewConfig() (*Config, error) {
 		}
 		cfg.EnableTestingEndpoints = b
 	}
+	if v := os.Getenv("APP_ENV"); v != "" {
+		cfg.AppEnv = strings.TrimSpace(strings.ToLower(v))
+	}
+	if v := os.Getenv("TELEGRAM_BOT_USERNAME"); v != "" {
+		cfg.TelegramOTP.BotUsername = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("TELEGRAM_OTP_TOKEN_SECRET"); v != "" {
+		cfg.TelegramOTP.TokenSecret = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("TELEGRAM_OTP_EXPIRES_IN_SEC"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, errors.New("TELEGRAM_OTP_EXPIRES_IN_SEC must be integer")
+		}
+		cfg.TelegramOTP.ExpiresIn = time.Duration(n) * time.Second
+	}
+	if v := os.Getenv("TELEGRAM_OTP_REQUIRE_CONTACT_MATCH"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, errors.New("TELEGRAM_OTP_REQUIRE_CONTACT_MATCH must be bool")
+		}
+		cfg.TelegramOTP.RequireContactMatch = b
+	}
+	if v := os.Getenv("TELEGRAM_BOT_INTERNAL_SECRET"); v != "" {
+		cfg.TelegramOTP.InternalBotSecret = strings.TrimSpace(v)
+	}
 
 	if cfg.DBPath == "" {
 		return nil, errors.New("DB_PATH is empty")
@@ -214,6 +258,27 @@ func NewConfig() (*Config, error) {
 	}
 	if cfg.Admin.Username == "" || cfg.Admin.Password == "" {
 		return nil, errors.New("admin credentials are empty")
+	}
+	if cfg.TelegramOTP.ExpiresIn < 3*time.Minute || cfg.TelegramOTP.ExpiresIn > 5*time.Minute {
+		return nil, errors.New("telegram otp expiry must be between 180 and 300 seconds")
+	}
+
+	if cfg.AppEnv == "" {
+		cfg.AppEnv = "development"
+	}
+	if cfg.AppEnv == "production" {
+		if cfg.EnableTestingEndpoints {
+			return nil, errors.New("ENABLE_TESTING_ENDPOINTS cannot be true in production")
+		}
+		if cfg.Admin.Username == "Admin" && cfg.Admin.Password == "QRT123" {
+			return nil, errors.New("default admin credentials are not allowed in production")
+		}
+		if cfg.JWT.AccessSecret == "change-me" || cfg.JWT.AdminSecret == "change-me-admin" {
+			return nil, errors.New("default jwt secrets are not allowed in production")
+		}
+		if cfg.TelegramOTP.TokenSecret == "" || cfg.TelegramOTP.TokenSecret == "change-me-telegram-otp" {
+			return nil, errors.New("TELEGRAM_OTP_TOKEN_SECRET must be set in production")
+		}
 	}
 
 	return cfg, nil

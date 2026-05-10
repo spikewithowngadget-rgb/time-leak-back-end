@@ -30,16 +30,34 @@ type IUserNotesService interface {
 		password string,
 		confirmPassword string,
 		verificationToken string,
+		device *AuthDeviceInput,
+		location *AuthLocationInput,
+		reqCtx AuthRequestContext,
 	) (domain.User, error)
-	LoginByPhonePassword(ctx context.Context, phone, password string) (domain.User, error)
+	LoginByPhonePassword(
+		ctx context.Context,
+		phone string,
+		password string,
+		verificationToken string,
+		device *AuthDeviceInput,
+		location *AuthLocationInput,
+		reqCtx AuthRequestContext,
+	) (domain.User, error)
 	ResetPasswordWithOTP(
 		ctx context.Context,
 		phone string,
 		newPassword string,
 		confirmPassword string,
 		verificationToken string,
+		device *AuthDeviceInput,
+		location *AuthLocationInput,
+		reqCtx AuthRequestContext,
 	) error
 	DeactivateUser(ctx context.Context, userID string) error
+	ListUserDevices(ctx context.Context, userID string) ([]domain.UserDevice, error)
+	DeactivateUserDevice(ctx context.Context, userID, deviceID string) error
+	ListUserLocationEvents(ctx context.Context, filter domain.UserLocationListFilter) ([]domain.UserLocationEvent, error)
+	ListAuthEvents(ctx context.Context, filter domain.AuthEventListFilter) ([]domain.AuthEvent, error)
 }
 
 type IJWTService interface {
@@ -56,6 +74,19 @@ type IJWTService interface {
 
 type IOTPService interface {
 	RequestOTP(ctx context.Context, channel domain.OTPChannel, destination string) (domain.OTPRequestResult, error)
+	RequestOTPForPurpose(
+		ctx context.Context,
+		channel domain.OTPChannel,
+		destination string,
+		purpose domain.AuthVerificationPurpose,
+	) (domain.OTPRequestResult, error)
+	IssueOTPForRequest(
+		ctx context.Context,
+		channel domain.OTPChannel,
+		destination string,
+		purpose domain.AuthVerificationPurpose,
+		requestID string,
+	) (domain.OTPRequestResult, string, error)
 	VerifyOTP(ctx context.Context, requestID, code string) (domain.OTPVerifyResult, error)
 	GetLatestTestingOTP(ctx context.Context, channel domain.OTPChannel, destination string) (domain.OTPTestingCode, error)
 }
@@ -72,12 +103,30 @@ type IAdminAuthService interface {
 	Login(ctx context.Context, username, password string) (AdminLoginResponse, error)
 }
 
+type ISecurityService interface {
+	CreateTelegramOTPRequest(
+		ctx context.Context,
+		phone string,
+		purpose string,
+		device *AuthDeviceInput,
+		location *AuthLocationInput,
+		reqCtx AuthRequestContext,
+	) (TelegramOTPRequestResponse, error)
+	OpenTelegramOTPLink(ctx context.Context, in TelegramOTPOpenInput) (TelegramOTPOpenResponse, error)
+	SendTelegramOTPCode(ctx context.Context, in TelegramOTPCodeSendInput) (TelegramOTPCodeSendResponse, error)
+	CancelTelegramOTP(ctx context.Context, requestID string) error
+	MarkTelegramOTPVerified(ctx context.Context, requestID string) error
+	ListTelegramOTPSessions(ctx context.Context, filter domain.TelegramOTPSessionListFilter) ([]domain.TelegramOTPSession, error)
+	GetTelegramOTPSession(ctx context.Context, requestID string) (domain.TelegramOTPSession, error)
+}
+
 type Services struct {
 	App   IUserNotesService
 	JWT   IJWTService
 	OTP   IOTPService
 	Ads   IAdsService
 	Admin IAdminAuthService
+	Security ISecurityService
 }
 
 func NewServices(
@@ -95,6 +144,7 @@ func NewServices(
 	otpService := NewOTPService(repositories.Auth, appConfig.OTP, log)
 	adsService := NewAdsService(repositories.Auth, log)
 	adminService := NewAdminAuthService(appConfig.Admin, jwtService, log)
+	securityService := NewSecurityService(appConfig, repositories.Auth, otpService, log)
 
 	return &Services{
 		App:   appService,
@@ -102,5 +152,6 @@ func NewServices(
 		OTP:   otpService,
 		Ads:   adsService,
 		Admin: adminService,
+		Security: securityService,
 	}
 }

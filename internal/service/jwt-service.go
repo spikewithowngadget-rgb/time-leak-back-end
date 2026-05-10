@@ -21,6 +21,7 @@ var (
 	ErrRefreshNotFound = errors.New("refresh not found")
 	ErrRefreshRevoked  = errors.New("refresh revoked")
 	ErrRefreshExpired  = errors.New("refresh expired")
+	ErrRefreshInactive = errors.New("refresh user inactive")
 	ErrForbiddenRole   = errors.New("forbidden role")
 	ErrInvalidAuthType = errors.New("invalid auth type")
 )
@@ -51,6 +52,7 @@ type RefreshStore interface {
 	SaveAdminRefresh(ctx context.Context, token string, rec domain.AdminRefreshRecord) error
 	GetAdminRefresh(ctx context.Context, token string) (domain.AdminRefreshRecord, error)
 	RevokeAdminRefresh(ctx context.Context, token string) error
+	IsUserActive(ctx context.Context, userID string) (bool, error)
 }
 
 type AuthService struct {
@@ -373,15 +375,18 @@ func (s *AuthService) Refresh(ctx context.Context, oldRefresh string) (TokenPair
 		if strings.TrimSpace(rec.Role) == "" {
 			rec.Role = "user"
 		}
-
-		// Issue a new access token but reuse the existing refresh token so that
-		// concurrent refresh calls from the same client all succeed instead of
-		// racing to revoke the token and returning 401.
-		access, err := s.issueUserAccessToken(rec.UserUUID, normalizePhone(rec.Phone), rec.AuthType, rec.Role)
-		if err != nil {
+		active, activeErr := s.store.IsUserActive(ctx, rec.UserUUID)
+		if activeErr != nil {
+			return TokenPair{}, activeErr
+		}
+		if !active {
+			_ = s.store.Revoke(ctx, oldRefresh)
+			return TokenPair{}, ErrRefreshInactive
+		}
+		if err := s.store.Revoke(ctx, oldRefresh); err != nil {
 			return TokenPair{}, err
 		}
-		return TokenPair{AccessToken: access, RefreshToken: oldRefresh}, nil
+		return s.issueTokens(ctx, rec.UserUUID, normalizePhone(rec.Phone), rec.AuthType, rec.Role)
 	}
 
 	adminRec, err := s.store.GetAdminRefresh(ctx, oldRefresh)
@@ -395,12 +400,14 @@ func (s *AuthService) Refresh(ctx context.Context, oldRefresh string) (TokenPair
 		return TokenPair{}, ErrRefreshExpired
 	}
 
-	// Reuse the same admin refresh token; only issue a fresh access token.
-	adminAccess, err := s.issueAdminAccessToken(adminRec.Username)
+	if err := s.store.RevokeAdminRefresh(ctx, oldRefresh); err != nil {
+		return TokenPair{}, err
+	}
+	adminToken, err := s.IssueAdminToken(ctx, adminRec.Username)
 	if err != nil {
 		return TokenPair{}, err
 	}
-	return TokenPair{AccessToken: adminAccess, RefreshToken: oldRefresh}, nil
+	return TokenPair{AccessToken: adminToken.AccessToken, RefreshToken: adminToken.RefreshToken}, nil
 }
 
 func newRandomToken(n int) (string, error) {

@@ -95,6 +95,10 @@ func (m *mockRefreshStore) RevokeAdminRefresh(_ context.Context, token string) e
 	return nil
 }
 
+func (m *mockRefreshStore) IsUserActive(_ context.Context, _ string) (bool, error) {
+	return true, nil
+}
+
 func newAuthForTest() (*AuthService, *mockRefreshStore) {
 	store := newMockRefreshStore()
 	svc := NewAuthService(config.JWTConfig{
@@ -268,16 +272,15 @@ func TestJWT_Refresh_Success(t *testing.T) {
 	if newPair.AccessToken == "" {
 		t.Fatal("expected new access token")
 	}
-	// Refresh token is reused (no rotation) so concurrent refreshes don't race.
-	if newPair.RefreshToken != pair.RefreshToken {
-		t.Fatalf("expected same refresh token to be returned, got different")
+	if newPair.RefreshToken == "" || newPair.RefreshToken == pair.RefreshToken {
+		t.Fatalf("expected rotated refresh token, got %q", newPair.RefreshToken)
 	}
-	if store.revoked[pair.RefreshToken] {
-		t.Fatal("refresh token must NOT be revoked after a successful refresh")
+	if !store.revoked[pair.RefreshToken] {
+		t.Fatal("expected old refresh token to be revoked after refresh rotation")
 	}
 }
 
-func TestJWT_Refresh_Idempotent(t *testing.T) {
+func TestJWT_Refresh_RevokedAfterFirstUse(t *testing.T) {
 	svc, _ := newAuthForTest()
 
 	pair, err := svc.IssueUserTokens(context.Background(), domain.User{UserID: "u-1", Phone: "+77015556677"}, "otp_whatsapp")
@@ -285,17 +288,19 @@ func TestJWT_Refresh_Idempotent(t *testing.T) {
 		t.Fatalf("IssueUserTokens error: %v", err)
 	}
 
-	// Simulate two concurrent refresh calls with the same token.
 	p1, err1 := svc.Refresh(context.Background(), pair.RefreshToken)
 	p2, err2 := svc.Refresh(context.Background(), pair.RefreshToken)
 	if err1 != nil {
 		t.Fatalf("first Refresh error: %v", err1)
 	}
-	if err2 != nil {
-		t.Fatalf("second concurrent Refresh error: %v", err2)
+	if !errors.Is(err2, ErrRefreshRevoked) {
+		t.Fatalf("expected second refresh to fail with ErrRefreshRevoked, got %v", err2)
 	}
-	if p1.RefreshToken != pair.RefreshToken || p2.RefreshToken != pair.RefreshToken {
-		t.Fatal("both calls should return the same (original) refresh token")
+	if p1.RefreshToken == pair.RefreshToken {
+		t.Fatal("expected first refresh to rotate the refresh token")
+	}
+	if p2.RefreshToken != "" {
+		t.Fatal("expected empty token pair on second refresh")
 	}
 }
 
@@ -370,12 +375,11 @@ func TestJWT_Refresh_AdminSuccess(t *testing.T) {
 	if newPair.AccessToken == "" {
 		t.Fatal("expected refreshed admin access token")
 	}
-	// Refresh token is reused (no rotation).
-	if newPair.RefreshToken != adminToken.RefreshToken {
-		t.Fatalf("expected same admin refresh token to be returned")
+	if newPair.RefreshToken == "" || newPair.RefreshToken == adminToken.RefreshToken {
+		t.Fatalf("expected rotated admin refresh token to be returned")
 	}
-	if store.adminRevoked[adminToken.RefreshToken] {
-		t.Fatal("admin refresh token must NOT be revoked after a successful refresh")
+	if !store.adminRevoked[adminToken.RefreshToken] {
+		t.Fatal("expected old admin refresh token to be revoked after refresh rotation")
 	}
 
 	claims, err := svc.VerifyAdminAccess(newPair.AccessToken)

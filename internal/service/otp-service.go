@@ -40,6 +40,7 @@ type OTPRepository interface {
 		requestID string,
 		channel domain.OTPChannel,
 		destination string,
+		purpose domain.AuthVerificationPurpose,
 		codeHash string,
 		expiresAt time.Time,
 		maxAttempts int,
@@ -142,32 +143,69 @@ func NewOTPService(repo OTPRepository, otpCfg config.OTPConfig, log *zap.Logger)
 }
 
 func (s *OTPService) RequestOTP(ctx context.Context, channel domain.OTPChannel, destination string) (domain.OTPRequestResult, error) {
+	return s.RequestOTPForPurpose(ctx, channel, destination, domain.AuthVerificationPurposeRegistration)
+}
+
+func (s *OTPService) RequestOTPForPurpose(
+	ctx context.Context,
+	channel domain.OTPChannel,
+	destination string,
+	purpose domain.AuthVerificationPurpose,
+) (domain.OTPRequestResult, error) {
+	result, _, err := s.requestOTPInternal(ctx, channel, destination, purpose, "")
+	return result, err
+}
+
+func (s *OTPService) IssueOTPForRequest(
+	ctx context.Context,
+	channel domain.OTPChannel,
+	destination string,
+	purpose domain.AuthVerificationPurpose,
+	requestID string,
+) (domain.OTPRequestResult, string, error) {
+	return s.requestOTPInternal(ctx, channel, destination, purpose, requestID)
+}
+
+func (s *OTPService) requestOTPInternal(
+	ctx context.Context,
+	channel domain.OTPChannel,
+	destination string,
+	purpose domain.AuthVerificationPurpose,
+	requestID string,
+) (domain.OTPRequestResult, string, error) {
 	channel = normalizeOTPChannel(channel)
 	destination = normalizeOTPDestination(channel, destination)
+	purpose = normalizeAuthVerificationPurpose(purpose)
 	if err := validateOTPDestination(channel, destination); err != nil {
-		return domain.OTPRequestResult{}, err
+		return domain.OTPRequestResult{}, "", err
+	}
+	if purpose == "" {
+		return domain.OTPRequestResult{}, "", ErrInvalidAuthPurpose
 	}
 
 	now := time.Now().UTC()
 	lockState, err := s.repo.GetOTPLockState(ctx, channel, destination)
 	if err == nil && lockState.LockedUntil != nil && now.Before(*lockState.LockedUntil) {
-		return domain.OTPRequestResult{}, ErrOTPLocked
+		return domain.OTPRequestResult{}, "", ErrOTPLocked
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return domain.OTPRequestResult{}, err
+		return domain.OTPRequestResult{}, "", err
 	}
 
 	latest, err := s.repo.GetLatestOTPRequestByDestination(ctx, channel, destination)
 	if err == nil {
 		if latest.CreatedAt.Add(s.requestCooldown).After(now) {
-			return domain.OTPRequestResult{}, ErrOTPTooManyRequests
+			return domain.OTPRequestResult{}, "", ErrOTPTooManyRequests
 		}
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return domain.OTPRequestResult{}, err
+		return domain.OTPRequestResult{}, "", err
 	}
 
-	requestID := dbtraits.GenerateUUID()
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		requestID = dbtraits.GenerateUUID()
+	}
 	var code string
 	if staticCode, ok := lookupStaticTestingOTP(destination); ok {
 		// Explicitly allowlisted testing phones keep their configured static OTP
@@ -177,13 +215,13 @@ func (s *OTPService) RequestOTP(ctx context.Context, channel domain.OTPChannel, 
 		var genErr error
 		code, genErr = generateNumericOTPCode()
 		if genErr != nil {
-			return domain.OTPRequestResult{}, genErr
+			return domain.OTPRequestResult{}, "", genErr
 		}
 	}
 	codeHash := s.hashOTP(requestID, channel, destination, code)
 	expiresAt := now.Add(s.otpTTL)
-	if _, err := s.repo.CreateOTPRequest(ctx, requestID, channel, destination, codeHash, expiresAt, s.maxAttempts); err != nil {
-		return domain.OTPRequestResult{}, err
+	if _, err := s.repo.CreateOTPRequest(ctx, requestID, channel, destination, purpose, codeHash, expiresAt, s.maxAttempts); err != nil {
+		return domain.OTPRequestResult{}, "", err
 	}
 
 	s.testStore.set(domain.OTPTestingCode{
@@ -195,10 +233,11 @@ func (s *OTPService) RequestOTP(ctx context.Context, channel domain.OTPChannel, 
 		ExpiresAt:   expiresAt,
 	})
 
-	return domain.OTPRequestResult{
+	result := domain.OTPRequestResult{
 		RequestID:        requestID,
 		ExpiresInSeconds: int(s.otpTTL.Seconds()),
-	}, nil
+	}
+	return result, code, nil
 }
 
 func (s *OTPService) VerifyOTP(ctx context.Context, requestID, code string) (domain.OTPVerifyResult, error) {
@@ -276,7 +315,11 @@ func (s *OTPService) VerifyOTP(ctx context.Context, requestID, code string) (dom
 		return domain.OTPVerifyResult{}, err
 	}
 
-	return domain.OTPVerifyResult{Channel: req.Channel, Destination: req.Destination}, nil
+	return domain.OTPVerifyResult{
+		Channel:     req.Channel,
+		Destination: req.Destination,
+		Purpose:     req.Purpose,
+	}, nil
 }
 
 func (s *OTPService) GetLatestTestingOTP(ctx context.Context, channel domain.OTPChannel, destination string) (domain.OTPTestingCode, error) {
@@ -314,6 +357,8 @@ func normalizeOTPChannel(channel domain.OTPChannel) domain.OTPChannel {
 	switch strings.ToLower(strings.TrimSpace(string(channel))) {
 	case string(domain.OTPChannelWhatsApp):
 		return domain.OTPChannelWhatsApp
+	case string(domain.OTPChannelTelegram):
+		return domain.OTPChannelTelegram
 	default:
 		return domain.OTPChannel("")
 	}
@@ -322,6 +367,8 @@ func normalizeOTPChannel(channel domain.OTPChannel) domain.OTPChannel {
 func normalizeOTPDestination(channel domain.OTPChannel, destination string) string {
 	switch channel {
 	case domain.OTPChannelWhatsApp:
+		return normalizePhone(destination)
+	case domain.OTPChannelTelegram:
 		return normalizePhone(destination)
 	default:
 		return strings.TrimSpace(destination)
@@ -333,7 +380,7 @@ func validateOTPDestination(channel domain.OTPChannel, destination string) error
 		return ErrInvalidOTPDestination
 	}
 	switch channel {
-	case domain.OTPChannelWhatsApp:
+	case domain.OTPChannelWhatsApp, domain.OTPChannelTelegram:
 		if !phoneE164Pattern.MatchString(destination) {
 			return ErrInvalidOTPDestination
 		}
