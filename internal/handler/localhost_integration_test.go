@@ -11,6 +11,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -346,6 +347,58 @@ func TestLocalhostServer_PhoneOTPAndNotesFlow(t *testing.T) {
 		t.Fatalf("deleted note file status: got %d want 404", deletedNoteFileResp.StatusCode)
 	}
 	_ = deletedNoteFileResp.Body.Close()
+}
+
+func TestLocalhostServer_OTPRequestSendsWhapiMessage(t *testing.T) {
+	type capturedWhapiRequest struct {
+		Path string
+		Auth string
+		Body struct {
+			To   string `json:"to"`
+			Text string `json:"text"`
+		}
+	}
+	captured := make(chan capturedWhapiRequest, 1)
+	srv := newLocalTestServerWithWhapi(t, true, func(w http.ResponseWriter, r *http.Request) {
+		var got capturedWhapiRequest
+		got.Path = r.URL.Path
+		got.Auth = r.Header.Get("Authorization")
+		if err := json.NewDecoder(r.Body).Decode(&got.Body); err != nil {
+			t.Fatalf("decode whapi request: %v", err)
+		}
+		captured <- got
+		w.WriteHeader(http.StatusOK)
+	})
+	defer srv.Close()
+
+	resp := doReq(t, srv.URL, http.MethodPost, "/api/v1/auth/otp/request", map[string]any{
+		"phone": "87471850499",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("otp request status: got %d want 200", resp.StatusCode)
+	}
+	var body struct {
+		RequestID        string `json:"request_id"`
+		ExpiresInSeconds int    `json:"expires_in_seconds"`
+	}
+	decodeJSON(t, resp, &body)
+	if body.RequestID == "" || body.ExpiresInSeconds != 300 {
+		t.Fatalf("unexpected otp response body: %+v", body)
+	}
+
+	got := <-captured
+	if got.Path != "/api/message" {
+		t.Fatalf("whapi path: got %q want /api/message", got.Path)
+	}
+	if got.Auth != "Bearer redacted-test-token" {
+		t.Fatalf("whapi authorization header mismatch")
+	}
+	if got.Body.To != "77471850499" {
+		t.Fatalf("whapi to: got %q want 77471850499", got.Body.To)
+	}
+	if !regexp.MustCompile(`^Ваш код подтверждения Timeleak: [0-9]{4}\. Код действителен 5 минут\.$`).MatchString(got.Body.Text) {
+		t.Fatalf("unexpected whapi text: %q", got.Body.Text)
+	}
 }
 
 func TestLocalhostServer_AdminLoginRefreshFlow(t *testing.T) {
@@ -878,9 +931,21 @@ func newLocalTestServer(t *testing.T) *httptest.Server {
 }
 
 func newLocalTestServerWithTestingEndpoints(t *testing.T, enableTestingEndpoints bool) *httptest.Server {
+	return newLocalTestServerWithWhapi(t, enableTestingEndpoints, nil)
+}
+
+func newLocalTestServerWithWhapi(t *testing.T, enableTestingEndpoints bool, whapiHandler http.HandlerFunc) *httptest.Server {
 	t.Helper()
 
 	tmp := t.TempDir()
+	if whapiHandler == nil {
+		whapiHandler = func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}
+	}
+	whapiServer := httptest.NewServer(whapiHandler)
+	t.Cleanup(whapiServer.Close)
+
 	cfg := &config.Config{
 		Addr:            ":0",
 		DBPath:          tmp,
@@ -904,10 +969,16 @@ func newLocalTestServerWithTestingEndpoints(t *testing.T, enableTestingEndpoints
 			LockDuration:    2 * time.Minute,
 			ExpiresIn:       5 * time.Minute,
 		},
+		Whapi: config.WhapiConfig{
+			BaseURL: whapiServer.URL,
+			Token:   "redacted-test-token",
+			Timeout: time.Second,
+		},
 		Admin: config.AdminConfig{
 			Username: "Admin",
 			Password: "QRT123",
 		},
+		AppEnv:                 "test",
 		EnableTestingEndpoints: enableTestingEndpoints,
 	}
 

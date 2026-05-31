@@ -235,10 +235,10 @@ func (s *AppService) LoginByPhonePassword(
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			_ = s.repo.CreateAuthEvent(ctx, domain.AuthEvent{
-				Phone:       normalizedPhone,
-				EventType:   "login_failed",
-				IPAddress:   reqCtx.IPAddress,
-				UserAgent:   reqCtx.UserAgent,
+				Phone:        normalizedPhone,
+				EventType:    "login_failed",
+				IPAddress:    reqCtx.IPAddress,
+				UserAgent:    reqCtx.UserAgent,
 				MetadataJSON: marshalJSON(map[string]any{"reason": "user_not_found"}),
 			})
 			return domain.User{}, ErrInvalidCredentials
@@ -450,7 +450,7 @@ func (s *AppService) persistAuthContext(
 	location *AuthLocationInput,
 	reqCtx AuthRequestContext,
 ) error {
-	resolvedDevice, resolvedLocation, err := s.resolveAuthContext(ctx, requestID, device, location)
+	resolvedDevice, resolvedLocation, err := s.resolveAuthContext(device, location)
 	if err != nil {
 		return err
 	}
@@ -506,12 +506,7 @@ func (s *AppService) persistAuthContext(
 	return s.repo.CreateAuthEvent(ctx, authEvent)
 }
 
-func (s *AppService) resolveAuthContext(
-	ctx context.Context,
-	requestID string,
-	device *AuthDeviceInput,
-	location *AuthLocationInput,
-) (*domain.AuthDevice, *domain.AuthLocation, error) {
+func (s *AppService) resolveAuthContext(device *AuthDeviceInput, location *AuthLocationInput) (*domain.AuthDevice, *domain.AuthLocation, error) {
 	resolvedDevice, err := normalizeDeviceInput(device)
 	if err != nil {
 		return nil, nil, err
@@ -520,18 +515,7 @@ func (s *AppService) resolveAuthContext(
 	if err != nil {
 		return nil, nil, err
 	}
-	if resolvedDevice != nil || resolvedLocation != nil || strings.TrimSpace(requestID) == "" {
-		return resolvedDevice, resolvedLocation, nil
-	}
-
-	session, err := s.repo.GetTelegramOTPSessionByRequestID(ctx, requestID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil, nil
-		}
-		return nil, nil, err
-	}
-	return session.Device, session.Location, nil
+	return resolvedDevice, resolvedLocation, nil
 }
 
 func authEventTypeToLocationType(eventType string) string {

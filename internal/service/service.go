@@ -80,13 +80,6 @@ type IOTPService interface {
 		destination string,
 		purpose domain.AuthVerificationPurpose,
 	) (domain.OTPRequestResult, error)
-	IssueOTPForRequest(
-		ctx context.Context,
-		channel domain.OTPChannel,
-		destination string,
-		purpose domain.AuthVerificationPurpose,
-		requestID string,
-	) (domain.OTPRequestResult, string, error)
 	VerifyOTP(ctx context.Context, requestID, code string) (domain.OTPVerifyResult, error)
 	GetLatestTestingOTP(ctx context.Context, channel domain.OTPChannel, destination string) (domain.OTPTestingCode, error)
 }
@@ -103,30 +96,12 @@ type IAdminAuthService interface {
 	Login(ctx context.Context, username, password string) (AdminLoginResponse, error)
 }
 
-type ISecurityService interface {
-	CreateTelegramOTPRequest(
-		ctx context.Context,
-		phone string,
-		purpose string,
-		device *AuthDeviceInput,
-		location *AuthLocationInput,
-		reqCtx AuthRequestContext,
-	) (TelegramOTPRequestResponse, error)
-	OpenTelegramOTPLink(ctx context.Context, in TelegramOTPOpenInput) (TelegramOTPOpenResponse, error)
-	SendTelegramOTPCode(ctx context.Context, in TelegramOTPCodeSendInput) (TelegramOTPCodeSendResponse, error)
-	CancelTelegramOTP(ctx context.Context, requestID string) error
-	MarkTelegramOTPVerified(ctx context.Context, requestID string) error
-	ListTelegramOTPSessions(ctx context.Context, filter domain.TelegramOTPSessionListFilter) ([]domain.TelegramOTPSession, error)
-	GetTelegramOTPSession(ctx context.Context, requestID string) (domain.TelegramOTPSession, error)
-}
-
 type Services struct {
 	App   IUserNotesService
 	JWT   IJWTService
 	OTP   IOTPService
 	Ads   IAdsService
 	Admin IAdminAuthService
-	Security ISecurityService
 }
 
 func NewServices(
@@ -139,12 +114,16 @@ func NewServices(
 		log = zap.NewNop()
 	}
 
+	otpCfg := appConfig.OTP
+	if otpCfg.AppEnv == "" {
+		otpCfg.AppEnv = appConfig.AppEnv
+	}
+
 	appService := NewAppService(repositories.Auth, appConfig.OTP.ExpiresIn, log)
 	jwtService := NewAuthService(appConfig.JWT, repositories.Auth, log)
-	otpService := NewOTPService(repositories.Auth, appConfig.OTP, log)
+	otpService := NewOTPService(repositories.Auth, otpCfg, log, NewWhapiSender(appConfig.Whapi, appConfig.OTP.ExpiresIn, log))
 	adsService := NewAdsService(repositories.Auth, log)
 	adminService := NewAdminAuthService(appConfig.Admin, jwtService, log)
-	securityService := NewSecurityService(appConfig, repositories.Auth, otpService, log)
 
 	return &Services{
 		App:   appService,
@@ -152,6 +131,5 @@ func NewServices(
 		OTP:   otpService,
 		Ads:   adsService,
 		Admin: adminService,
-		Security: securityService,
 	}
 }

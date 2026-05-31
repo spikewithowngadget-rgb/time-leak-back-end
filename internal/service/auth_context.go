@@ -17,11 +17,6 @@ var (
 	ErrInvalidLatitude       = errors.New("latitude is invalid")
 	ErrInvalidLongitude      = errors.New("longitude is invalid")
 	ErrInvalidLocationSource = errors.New("location source is invalid")
-	ErrContactPhoneMismatch  = errors.New("telegram contact phone does not match")
-	ErrTelegramLinkExpired   = errors.New("telegram verification link expired")
-	ErrTelegramLinkInvalid   = errors.New("telegram verification link is invalid")
-	ErrTelegramSessionState  = errors.New("telegram verification session state is invalid")
-	ErrTelegramBotNotReady   = errors.New("telegram verification is not configured")
 )
 
 type AuthRequestContext struct {

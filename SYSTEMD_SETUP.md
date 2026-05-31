@@ -79,6 +79,9 @@ sudo systemctl disable time-leak
 - **APP_ADDR** - адрес слушания (по умолчанию `:8080`)
 - **DB_PATH** - путь к директории базы данных (по умолчанию `/home/time-leak-back-end/data`)
 - **DB_NAME** - имя файла БД (по умолчанию `timeleak.db`)
+- **WHAPI_BASE_URL** - базовый URL WhatsApp-интегратора (по умолчанию `https://whapi.kz`)
+- **WHAPI_TOKEN** - секретный токен WHAPI, задавайте через переменные окружения или отдельный защищенный EnvironmentFile
+- **WHAPI_TIMEOUT** - таймаут запроса к WHAPI (по умолчанию `10s`)
 - **ENABLE_TESTING_ENDPOINTS** - включает DEV endpoint `/api/v1/admin/testing/otp/latest` (ставьте `true` только для dev/staging)
 - **User** - пользователь, от которого запускается сервис (по умолчанию `root`)
 

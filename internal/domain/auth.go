@@ -44,7 +44,6 @@ type OTPChannel string
 
 const (
 	OTPChannelWhatsApp OTPChannel = "whatsapp"
-	OTPChannelTelegram OTPChannel = "telegram"
 )
 
 type OTPRequest struct {

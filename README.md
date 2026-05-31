@@ -1,6 +1,6 @@
 # Time Leak Backend
 
-Go backend with SQLite, JWT auth, phone-only WhatsApp OTP auth (development stub), notes, and ads rotation.
+Go backend with SQLite, JWT auth, phone-only WhatsApp OTP auth through WHAPI, notes, and ads rotation.
 
 ## Features
 
@@ -10,7 +10,7 @@ Go backend with SQLite, JWT auth, phone-only WhatsApp OTP auth (development stub
 - Uploaded note files are stored under `./note_files/{audio|photo|video|document}`
 - Access token TTL is exactly `60s`
 - Refresh token rotation with revocation
-- OTP auth (phone-only WhatsApp, demo stub):
+- OTP auth (phone-only WhatsApp via WHAPI):
   - `POST /api/v1/auth/otp/request`
   - `POST /api/v1/auth/otp/verify`
   - `POST /api/v1/auth/register`
@@ -49,6 +49,12 @@ Environment overrides:
 - `OTP_MAX_ATTEMPTS`
 - `OTP_LOCK_DURATION_SEC`
 - `OTP_EXPIRES_IN_SEC` (must be between `180` and `300`)
+- `WHAPI_BASE_URL` (default `https://whapi.kz`)
+- `WHAPI_TOKEN`
+- `WHAPI_TIMEOUT` (default `10s`)
+- `OTP_TEST_ENABLED` (`false` by default; ignored in production)
+- `OTP_TEST_PHONE`
+- `OTP_TEST_CODE`
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD`
 - `ENABLE_TESTING_ENDPOINTS` (`false` by default)
@@ -97,6 +103,24 @@ Note responses include `note_files` as downloadable URLs for the mobile app.
 - Requires:
   - `ENABLE_TESTING_ENDPOINTS=true`
 - Query: provide `phone`
+
+### Local OTP Flow
+
+Request an OTP:
+
+```bash
+curl -X POST http://localhost:8081/api/v1/auth/otp/request \
+  -H 'Content-Type: application/json' \
+  -d '{"phone":"+77471850499"}'
+```
+
+Verify the delivered code:
+
+```bash
+curl -X POST http://localhost:8081/api/v1/auth/otp/verify \
+  -H 'Content-Type: application/json' \
+  -d '{"request_id":"<request_id>","code":"<code>"}'
+```
 
 ### Permanent Access Token Endpoint (DEV ONLY)
 

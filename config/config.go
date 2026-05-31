@@ -24,6 +24,10 @@ type OTPConfig struct {
 	MaxAttempts     int
 	LockDuration    time.Duration
 	ExpiresIn       time.Duration
+	TestEnabled     bool
+	TestPhone       string
+	TestCode        string
+	AppEnv          string
 }
 
 type AdminConfig struct {
@@ -31,12 +35,10 @@ type AdminConfig struct {
 	Password string
 }
 
-type TelegramOTPConfig struct {
-	BotUsername         string
-	TokenSecret         string
-	ExpiresIn           time.Duration
-	RequireContactMatch bool
-	InternalBotSecret   string
+type WhapiConfig struct {
+	BaseURL string
+	Token   string
+	Timeout time.Duration
 }
 
 type Config struct {
@@ -51,11 +53,15 @@ type Config struct {
 	AppEnv                 string
 	JWT                    JWTConfig
 	OTP                    OTPConfig
-	TelegramOTP            TelegramOTPConfig
+	Whapi                  WhapiConfig
 	Admin                  AdminConfig
 }
 
 func NewConfig() (*Config, error) {
+	if err := loadDotEnv(".env"); err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		Addr:            ":8081",
 		DBPath:          "data",
@@ -78,17 +84,19 @@ func NewConfig() (*Config, error) {
 			MaxAttempts:     5,
 			LockDuration:    2 * time.Minute,
 			ExpiresIn:       5 * time.Minute,
+			TestEnabled:     false,
+			TestPhone:       "",
+			TestCode:        "",
+			AppEnv:          "development",
 		},
 		Admin: AdminConfig{
 			Username: "Admin",
 			Password: "QRT123",
 		},
-		TelegramOTP: TelegramOTPConfig{
-			BotUsername:         "",
-			TokenSecret:         "change-me-telegram-otp",
-			ExpiresIn:           5 * time.Minute,
-			RequireContactMatch: false,
-			InternalBotSecret:   "",
+		Whapi: WhapiConfig{
+			BaseURL: "https://whapi.kz",
+			Token:   "",
+			Timeout: 10 * time.Second,
 		},
 		AppEnv:                 "development",
 		EnableTestingEndpoints: false,
@@ -176,6 +184,19 @@ func NewConfig() (*Config, error) {
 		}
 		cfg.OTP.ExpiresIn = time.Duration(n) * time.Second
 	}
+	if v := os.Getenv("OTP_TEST_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, errors.New("OTP_TEST_ENABLED must be bool")
+		}
+		cfg.OTP.TestEnabled = b
+	}
+	if v := os.Getenv("OTP_TEST_PHONE"); v != "" {
+		cfg.OTP.TestPhone = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("OTP_TEST_CODE"); v != "" {
+		cfg.OTP.TestCode = strings.TrimSpace(v)
+	}
 
 	if v := os.Getenv("ADMIN_USERNAME"); v != "" {
 		cfg.Admin.Username = strings.TrimSpace(v)
@@ -193,28 +214,19 @@ func NewConfig() (*Config, error) {
 	if v := os.Getenv("APP_ENV"); v != "" {
 		cfg.AppEnv = strings.TrimSpace(strings.ToLower(v))
 	}
-	if v := os.Getenv("TELEGRAM_BOT_USERNAME"); v != "" {
-		cfg.TelegramOTP.BotUsername = strings.TrimSpace(v)
+	cfg.OTP.AppEnv = cfg.AppEnv
+	if v := os.Getenv("WHAPI_BASE_URL"); v != "" {
+		cfg.Whapi.BaseURL = strings.TrimRight(strings.TrimSpace(v), "/")
 	}
-	if v := os.Getenv("TELEGRAM_OTP_TOKEN_SECRET"); v != "" {
-		cfg.TelegramOTP.TokenSecret = strings.TrimSpace(v)
+	if v := os.Getenv("WHAPI_TOKEN"); v != "" {
+		cfg.Whapi.Token = strings.TrimSpace(v)
 	}
-	if v := os.Getenv("TELEGRAM_OTP_EXPIRES_IN_SEC"); v != "" {
-		n, err := strconv.Atoi(v)
+	if v := os.Getenv("WHAPI_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(strings.TrimSpace(v))
 		if err != nil {
-			return nil, errors.New("TELEGRAM_OTP_EXPIRES_IN_SEC must be integer")
+			return nil, errors.New("WHAPI_TIMEOUT must be duration")
 		}
-		cfg.TelegramOTP.ExpiresIn = time.Duration(n) * time.Second
-	}
-	if v := os.Getenv("TELEGRAM_OTP_REQUIRE_CONTACT_MATCH"); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			return nil, errors.New("TELEGRAM_OTP_REQUIRE_CONTACT_MATCH must be bool")
-		}
-		cfg.TelegramOTP.RequireContactMatch = b
-	}
-	if v := os.Getenv("TELEGRAM_BOT_INTERNAL_SECRET"); v != "" {
-		cfg.TelegramOTP.InternalBotSecret = strings.TrimSpace(v)
+		cfg.Whapi.Timeout = d
 	}
 
 	if cfg.DBPath == "" {
@@ -259,16 +271,31 @@ func NewConfig() (*Config, error) {
 	if cfg.Admin.Username == "" || cfg.Admin.Password == "" {
 		return nil, errors.New("admin credentials are empty")
 	}
-	if cfg.TelegramOTP.ExpiresIn < 3*time.Minute || cfg.TelegramOTP.ExpiresIn > 5*time.Minute {
-		return nil, errors.New("telegram otp expiry must be between 180 and 300 seconds")
+	if strings.TrimSpace(cfg.Whapi.BaseURL) == "" {
+		return nil, errors.New("WHAPI_BASE_URL is empty")
+	}
+	if cfg.Whapi.Timeout <= 0 {
+		return nil, errors.New("WHAPI_TIMEOUT must be > 0")
+	}
+	if cfg.OTP.TestEnabled {
+		if cfg.OTP.TestPhone == "" {
+			return nil, errors.New("OTP_TEST_PHONE is required when OTP_TEST_ENABLED=true")
+		}
+		if !isFourDigitCode(cfg.OTP.TestCode) {
+			return nil, errors.New("OTP_TEST_CODE must be 4 digits when OTP_TEST_ENABLED=true")
+		}
 	}
 
 	if cfg.AppEnv == "" {
 		cfg.AppEnv = "development"
 	}
+	cfg.OTP.AppEnv = cfg.AppEnv
 	if cfg.AppEnv == "production" {
 		if cfg.EnableTestingEndpoints {
 			return nil, errors.New("ENABLE_TESTING_ENDPOINTS cannot be true in production")
+		}
+		if cfg.OTP.TestEnabled {
+			return nil, errors.New("OTP_TEST_ENABLED cannot be true in production")
 		}
 		if cfg.Admin.Username == "Admin" && cfg.Admin.Password == "QRT123" {
 			return nil, errors.New("default admin credentials are not allowed in production")
@@ -276,8 +303,8 @@ func NewConfig() (*Config, error) {
 		if cfg.JWT.AccessSecret == "change-me" || cfg.JWT.AdminSecret == "change-me-admin" {
 			return nil, errors.New("default jwt secrets are not allowed in production")
 		}
-		if cfg.TelegramOTP.TokenSecret == "" || cfg.TelegramOTP.TokenSecret == "change-me-telegram-otp" {
-			return nil, errors.New("TELEGRAM_OTP_TOKEN_SECRET must be set in production")
+		if strings.TrimSpace(cfg.Whapi.Token) == "" {
+			return nil, errors.New("WHAPI_TOKEN must be set in production")
 		}
 	}
 
@@ -286,4 +313,17 @@ func NewConfig() (*Config, error) {
 
 func (c *Config) GetDatabasePath() string {
 	return filepath.Join(c.DBPath, c.DBName)
+}
+
+func isFourDigitCode(code string) bool {
+	code = strings.TrimSpace(code)
+	if len(code) != 4 {
+		return false
+	}
+	for _, r := range code {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

@@ -12,6 +12,9 @@ WorkingDirectory=/home/time-leak-back-end
 Environment="APP_ADDR=:8080"
 Environment="DB_PATH=/home/time-leak-back-end/data"
 Environment="DB_NAME=timeleak.db"
+Environment="WHAPI_BASE_URL=https://whapi.kz"
+Environment="WHAPI_TIMEOUT=10s"
+# Set WHAPI_TOKEN in a protected EnvironmentFile or systemd drop-in.
 # DEV ONLY: set true only on development/staging.
 Environment="ENABLE_TESTING_ENDPOINTS=false"
 Environment="PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"

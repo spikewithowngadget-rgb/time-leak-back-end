@@ -12,10 +12,10 @@ import (
 
 const (
 	defaultPublicAPIBaseURL = "https://api.timeleak.kz"
-	publicAPIReviewPhone    = "+77471231213"
-	publicAPIReviewOTPCode  = "1111"
+	publicAPIReviewPhone    = "+77471850499"
 	runLiveAPITestsEnv      = "TIME_LEAK_RUN_LIVE_API_TESTS"
 	publicAPIBaseURLEnv     = "TIME_LEAK_PUBLIC_API_BASE_URL"
+	publicAPIOTPCodeEnv     = "TIME_LEAK_PUBLIC_API_OTP_CODE"
 )
 
 func TestPublicAPI_Health(t *testing.T) {
@@ -57,9 +57,14 @@ func TestPublicAPI_AppStoreReviewOTPFlow(t *testing.T) {
 		t.Fatalf("expected positive expires_in_seconds, got %d", otpReqBody.ExpiresInSeconds)
 	}
 
+	otpCode := strings.TrimSpace(os.Getenv(publicAPIOTPCodeEnv))
+	if otpCode == "" {
+		t.Skip("set TIME_LEAK_PUBLIC_API_OTP_CODE to the delivered WhatsApp code to verify the live OTP flow")
+	}
+
 	verifyResp := doLiveReq(t, baseURL, http.MethodPost, "/api/v1/auth/otp/verify", map[string]any{
 		"request_id": otpReqBody.RequestID,
-		"code":       publicAPIReviewOTPCode,
+		"code":       otpCode,
 	})
 	if verifyResp.StatusCode != http.StatusOK {
 		t.Fatalf("otp verify status: got %d want 200", verifyResp.StatusCode)

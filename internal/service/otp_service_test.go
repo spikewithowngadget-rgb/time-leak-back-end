@@ -13,8 +13,23 @@ import (
 )
 
 type otpRepoMock struct {
-	requests map[string]domain.OTPRequest
-	locks    map[string]domain.OTPLockState
+	requests  map[string]domain.OTPRequest
+	locks     map[string]domain.OTPLockState
+	createErr error
+}
+
+type otpSenderMock struct {
+	calls int
+	phone string
+	code  string
+	err   error
+}
+
+func (m *otpSenderMock) SendOTP(_ context.Context, phone string, code string) error {
+	m.calls++
+	m.phone = phone
+	m.code = code
+	return m.err
 }
 
 func newOTPRepoMock() *otpRepoMock {
@@ -34,6 +49,9 @@ func (m *otpRepoMock) CreateOTPRequest(
 	expiresAt time.Time,
 	maxAttempts int,
 ) (domain.OTPRequest, error) {
+	if m.createErr != nil {
+		return domain.OTPRequest{}, m.createErr
+	}
 	req := domain.OTPRequest{
 		ID:          requestID,
 		Channel:     channel,
@@ -47,6 +65,14 @@ func (m *otpRepoMock) CreateOTPRequest(
 	}
 	m.requests[requestID] = req
 	return req, nil
+}
+
+func (m *otpRepoMock) DeleteOTPRequest(_ context.Context, requestID string) error {
+	if _, ok := m.requests[requestID]; !ok {
+		return sql.ErrNoRows
+	}
+	delete(m.requests, requestID)
+	return nil
 }
 
 func (m *otpRepoMock) GetOTPRequestByID(_ context.Context, requestID string) (domain.OTPRequest, error) {
@@ -174,6 +200,37 @@ func TestOTP_Verify_Success(t *testing.T) {
 	if stored.UsedAt == nil {
 		t.Fatal("expected used_at to be set")
 	}
+	if stored.CodeHash == debugCode.Code {
+		t.Fatal("stored OTP must be hashed, not plaintext")
+	}
+	if len(stored.CodeHash) != 64 {
+		t.Fatalf("expected sha256 hex hash length 64, got %d", len(stored.CodeHash))
+	}
+}
+
+func TestOTP_Verify_WrongCodeFails(t *testing.T) {
+	svc, _ := newOTPServiceForTest()
+	ctx := context.Background()
+
+	result, err := svc.RequestOTP(ctx, domain.OTPChannelWhatsApp, "+77015556677")
+	if err != nil {
+		t.Fatalf("RequestOTP error: %v", err)
+	}
+
+	debugCode, err := svc.GetLatestTestingOTP(ctx, domain.OTPChannelWhatsApp, "+77015556677")
+	if err != nil {
+		t.Fatalf("GetLatestTestingOTP error: %v", err)
+	}
+
+	wrongCode := "9999"
+	if wrongCode == debugCode.Code {
+		wrongCode = "8888"
+	}
+
+	_, err = svc.VerifyOTP(ctx, result.RequestID, wrongCode)
+	if !errors.Is(err, ErrOTPInvalidCode) {
+		t.Fatalf("expected ErrOTPInvalidCode, got %v", err)
+	}
 }
 
 func TestOTP_Verify_AttemptsAndLock(t *testing.T) {
@@ -211,68 +268,220 @@ func TestOTP_Verify_AttemptsAndLock(t *testing.T) {
 	}
 }
 
-func TestOTP_Request_AppStoreReviewPhoneUsesFixedCode(t *testing.T) {
-	svc, _ := newOTPServiceForTest()
+func TestOTP_Verify_ExpiredFails(t *testing.T) {
+	svc, repo := newOTPServiceForTest()
 	ctx := context.Background()
 
-	result, err := svc.RequestOTP(ctx, domain.OTPChannelWhatsApp, appStoreTestPhone)
+	result, err := svc.RequestOTP(ctx, domain.OTPChannelWhatsApp, "+77015556677")
 	if err != nil {
 		t.Fatalf("RequestOTP error: %v", err)
 	}
-	if result.RequestID == "" {
-		t.Fatal("expected request id")
-	}
+	req := repo.requests[result.RequestID]
+	req.ExpiresAt = time.Now().UTC().Add(-time.Second)
+	repo.requests[result.RequestID] = req
 
-	debugCode, err := svc.GetLatestTestingOTP(ctx, domain.OTPChannelWhatsApp, appStoreTestPhone)
+	debugCode, err := svc.GetLatestTestingOTP(ctx, domain.OTPChannelWhatsApp, "+77015556677")
 	if err != nil {
 		t.Fatalf("GetLatestTestingOTP error: %v", err)
 	}
-	if debugCode.Code != appStoreTestOTPCode {
-		t.Fatalf("expected app store review code %q got %q", appStoreTestOTPCode, debugCode.Code)
-	}
 
-	verifyResult, err := svc.VerifyOTP(ctx, result.RequestID, appStoreTestOTPCode)
-	if err != nil {
-		t.Fatalf("VerifyOTP error: %v", err)
-	}
-	if verifyResult.Destination != appStoreTestPhone {
-		t.Fatalf("expected destination %q got %q", appStoreTestPhone, verifyResult.Destination)
+	_, err = svc.VerifyOTP(ctx, result.RequestID, debugCode.Code)
+	if !errors.Is(err, ErrOTPExpired) {
+		t.Fatalf("expected ErrOTPExpired, got %v", err)
 	}
 }
 
-func TestStaticTestingPhoneContacts_ExposeTwentyStaticNumbers(t *testing.T) {
-	contacts := StaticTestingPhoneContacts()
-	if len(contacts) != 20 {
-		t.Fatalf("expected 20 static testing contacts, got %d", len(contacts))
-	}
-
-	last := contacts[len(contacts)-1]
-	if last.Phone != "+77471234019" {
-		t.Fatalf("unexpected last static testing phone %q", last.Phone)
-	}
-	if last.Code != "8416" {
-		t.Fatalf("unexpected last static testing code %q", last.Code)
-	}
-}
-
-func TestOTP_Request_AdditionalStaticTestingPhoneUsesConfiguredCode(t *testing.T) {
+func TestOTP_Request_RespectsRateLimit(t *testing.T) {
 	svc, _ := newOTPServiceForTest()
 	ctx := context.Background()
 
-	contact := StaticTestingPhoneContacts()[19]
-	result, err := svc.RequestOTP(ctx, domain.OTPChannelWhatsApp, contact.Phone)
+	if _, err := svc.RequestOTP(ctx, domain.OTPChannelWhatsApp, "+77015556677"); err != nil {
+		t.Fatalf("first RequestOTP error: %v", err)
+	}
+	_, err := svc.RequestOTP(ctx, domain.OTPChannelWhatsApp, "+77015556677")
+	if !errors.Is(err, ErrOTPTooManyRequests) {
+		t.Fatalf("expected ErrOTPTooManyRequests, got %v", err)
+	}
+}
+
+func TestOTP_Request_DoesNotSendWhenDBSaveFails(t *testing.T) {
+	repo := newOTPRepoMock()
+	repo.createErr = errors.New("create failed")
+	sender := &otpSenderMock{}
+	svc := NewOTPService(repo, config.OTPConfig{
+		HMACSecret:      "otp-test-secret",
+		RequestCooldown: time.Second,
+		MaxAttempts:     2,
+		LockDuration:    5 * time.Minute,
+		ExpiresIn:       time.Minute,
+	}, zap.NewNop(), sender)
+
+	_, err := svc.RequestOTP(context.Background(), domain.OTPChannelWhatsApp, "+77015556677")
+	if err == nil {
+		t.Fatal("expected create error")
+	}
+	if sender.calls != 0 {
+		t.Fatalf("sender called %d times; want 0", sender.calls)
+	}
+}
+
+func TestOTP_Request_DeletesStoredOTPWhenDeliveryFails(t *testing.T) {
+	repo := newOTPRepoMock()
+	sender := &otpSenderMock{err: ErrOTPDeliveryFailed}
+	svc := NewOTPService(repo, config.OTPConfig{
+		HMACSecret:      "otp-test-secret",
+		RequestCooldown: time.Second,
+		MaxAttempts:     2,
+		LockDuration:    5 * time.Minute,
+		ExpiresIn:       time.Minute,
+	}, zap.NewNop(), sender)
+
+	_, err := svc.RequestOTP(context.Background(), domain.OTPChannelWhatsApp, "+77015556677")
+	if !errors.Is(err, ErrOTPDeliveryFailed) {
+		t.Fatalf("expected ErrOTPDeliveryFailed, got %v", err)
+	}
+	if sender.calls != 1 {
+		t.Fatalf("sender calls: got %d want 1", sender.calls)
+	}
+	if len(repo.requests) != 0 {
+		t.Fatalf("expected failed delivery OTP to be deleted, stored requests: %d", len(repo.requests))
+	}
+}
+
+func TestOTP_Request_StaticTestCodeRequiresConfig(t *testing.T) {
+	repo := newOTPRepoMock()
+	sender := &otpSenderMock{err: ErrOTPDeliveryFailed}
+	svc := NewOTPService(repo, config.OTPConfig{
+		HMACSecret:      "otp-test-secret",
+		RequestCooldown: time.Second,
+		MaxAttempts:     2,
+		LockDuration:    5 * time.Minute,
+		ExpiresIn:       time.Minute,
+		TestEnabled:     true,
+		TestPhone:       "77471850499",
+		TestCode:        "1111",
+		AppEnv:          "development",
+	}, zap.NewNop(), sender)
+	ctx := context.Background()
+
+	result, err := svc.RequestOTP(ctx, domain.OTPChannelWhatsApp, "+77471850499")
 	if err != nil {
 		t.Fatalf("RequestOTP error: %v", err)
 	}
-	if result.RequestID == "" {
-		t.Fatal("expected request id")
-	}
-
-	debugCode, err := svc.GetLatestTestingOTP(ctx, domain.OTPChannelWhatsApp, contact.Phone)
+	debugCode, err := svc.GetLatestTestingOTP(ctx, domain.OTPChannelWhatsApp, "+77471850499")
 	if err != nil {
 		t.Fatalf("GetLatestTestingOTP error: %v", err)
 	}
-	if debugCode.Code != contact.Code {
-		t.Fatalf("expected configured code %q got %q", contact.Code, debugCode.Code)
+	if debugCode.Code != "1111" {
+		t.Fatalf("expected configured static code 1111 got %q", debugCode.Code)
+	}
+	if sender.calls != 0 {
+		t.Fatalf("static test OTP should not call sender, got %d calls", sender.calls)
+	}
+	if _, err := svc.VerifyOTP(ctx, result.RequestID, "1111"); err != nil {
+		t.Fatalf("VerifyOTP with static code error: %v", err)
+	}
+}
+
+func TestOTP_Request_StaticTestCodeDisabledByDefault(t *testing.T) {
+	svc, _ := newOTPServiceForTest()
+	ctx := context.Background()
+
+	result, err := svc.RequestOTP(ctx, domain.OTPChannelWhatsApp, "+77471850499")
+	if err != nil {
+		t.Fatalf("RequestOTP error: %v", err)
+	}
+	debugCode, err := svc.GetLatestTestingOTP(ctx, domain.OTPChannelWhatsApp, "+77471850499")
+	if err != nil {
+		t.Fatalf("GetLatestTestingOTP error: %v", err)
+	}
+	wrongCode := "1111"
+	if wrongCode == debugCode.Code {
+		wrongCode = "2222"
+	}
+	_, err = svc.VerifyOTP(ctx, result.RequestID, wrongCode)
+	if !errors.Is(err, ErrOTPInvalidCode) {
+		t.Fatalf("expected ErrOTPInvalidCode, got %v", err)
+	}
+}
+
+func TestOTP_Request_StaticTestCodeDisabledInProduction(t *testing.T) {
+	repo := newOTPRepoMock()
+	sender := &otpSenderMock{}
+	svc := NewOTPService(repo, config.OTPConfig{
+		HMACSecret:      "otp-test-secret",
+		RequestCooldown: time.Second,
+		MaxAttempts:     2,
+		LockDuration:    5 * time.Minute,
+		ExpiresIn:       time.Minute,
+		TestEnabled:     true,
+		TestPhone:       "77471850499",
+		TestCode:        "1111",
+		AppEnv:          "production",
+	}, zap.NewNop(), sender)
+	ctx := context.Background()
+
+	result, err := svc.RequestOTP(ctx, domain.OTPChannelWhatsApp, "+77471850499")
+	if err != nil {
+		t.Fatalf("RequestOTP error: %v", err)
+	}
+	if sender.calls != 1 {
+		t.Fatalf("production static config must send real OTP, sender calls: got %d want 1", sender.calls)
+	}
+	debugCode, err := svc.GetLatestTestingOTP(ctx, domain.OTPChannelWhatsApp, "+77471850499")
+	if err != nil {
+		t.Fatalf("GetLatestTestingOTP error: %v", err)
+	}
+	wrongCode := "1111"
+	if wrongCode == debugCode.Code {
+		wrongCode = "2222"
+	}
+	_, err = svc.VerifyOTP(ctx, result.RequestID, wrongCode)
+	if !errors.Is(err, ErrOTPInvalidCode) {
+		t.Fatalf("expected ErrOTPInvalidCode, got %v", err)
+	}
+}
+
+func TestOTP_StaticTestConfigDoesNotAllowOldGarbageNumbers(t *testing.T) {
+	repo := newOTPRepoMock()
+	svc := NewOTPService(repo, config.OTPConfig{
+		HMACSecret:      "otp-test-secret",
+		RequestCooldown: time.Second,
+		MaxAttempts:     2,
+		LockDuration:    5 * time.Minute,
+		ExpiresIn:       time.Minute,
+		TestEnabled:     true,
+		TestPhone:       "77471850499",
+		TestCode:        "1111",
+		AppEnv:          "development",
+	}, zap.NewNop())
+
+	oldNumbers := []string{
+		"+77081234000",
+		"+77081234001",
+		"+77071234002",
+		"+77051234003",
+		"+77011234004",
+		"+77021234005",
+		"+77751234006",
+		"+77771234007",
+		"+77061234008",
+		"+77781234009",
+		"+77081234010",
+		"+77071234011",
+		"+77051234012",
+		"+77011234013",
+		"+77021234014",
+		"+77751234015",
+		"+77771234016",
+		"+77061234017",
+		"+77781234018",
+		"+77471234019",
+		"+77471231213",
+	}
+	for _, phone := range oldNumbers {
+		if code, ok := svc.lookupStaticTestingOTP(phone); ok {
+			t.Fatalf("old testing phone %s unexpectedly bypassed with code %s", phone, code)
+		}
 	}
 }

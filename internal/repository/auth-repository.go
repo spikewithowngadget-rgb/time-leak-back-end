@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/json"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -728,6 +728,18 @@ func (r *Repository) CreateOTPRequest(
 	return r.GetOTPRequestByID(ctx, requestID)
 }
 
+func (r *Repository) DeleteOTPRequest(ctx context.Context, requestID string) error {
+	res, err := r.db.ExecContext(
+		ctx,
+		`DELETE FROM otp_requests WHERE id = ? AND used_at IS NULL`,
+		strings.TrimSpace(requestID),
+	)
+	if err != nil {
+		return fmt.Errorf("delete otp request: %w", err)
+	}
+	return ensureRowsAffected(res)
+}
+
 func (r *Repository) GetOTPRequestByID(ctx context.Context, requestID string) (domain.OTPRequest, error) {
 	row := r.db.QueryRowContext(
 		ctx,
@@ -1229,17 +1241,30 @@ func normalizePhone(phone string) string {
 		return ""
 	}
 
+	hasPlus := strings.HasPrefix(phone, "+")
 	var b strings.Builder
-	for i, r := range phone {
-		if r == '+' && i == 0 {
-			b.WriteRune(r)
-			continue
-		}
+	for _, r := range phone {
 		if r >= '0' && r <= '9' {
 			b.WriteRune(r)
 		}
 	}
-	return b.String()
+	digits := b.String()
+	if digits == "" {
+		return ""
+	}
+	if hasPlus {
+		return "+" + digits
+	}
+	switch {
+	case len(digits) == 11 && strings.HasPrefix(digits, "8"):
+		return "+7" + digits[1:]
+	case len(digits) == 11 && strings.HasPrefix(digits, "7"):
+		return "+" + digits
+	case len(digits) == 10:
+		return "+7" + digits
+	default:
+		return digits
+	}
 }
 
 func normalizeDestination(channel domain.OTPChannel, destination string) string {

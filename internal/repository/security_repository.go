@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -11,219 +10,6 @@ import (
 	"time-leak/internal/domain"
 	dbtraits "time-leak/traits/database"
 )
-
-func (r *Repository) CreateTelegramOTPSession(ctx context.Context, session domain.TelegramOTPSession) (domain.TelegramOTPSession, error) {
-	if strings.TrimSpace(session.ID) == "" {
-		session.ID = dbtraits.GenerateUUID()
-	}
-	if strings.TrimSpace(session.RequestID) == "" {
-		session.RequestID = dbtraits.GenerateUUID()
-	}
-	now := time.Now().UTC()
-	if session.CreatedAt.IsZero() {
-		session.CreatedAt = now
-	}
-	if session.UpdatedAt.IsZero() {
-		session.UpdatedAt = now
-	}
-
-	_, err := r.db.ExecContext(
-		ctx,
-		`INSERT INTO telegram_otp_sessions (
-			id, request_id, phone, purpose, deep_link_token_hash, status,
-			telegram_user_id, telegram_chat_id, telegram_username, telegram_first_name, telegram_last_name,
-			device_json, location_json, expires_at, opened_at, code_sent_at, verified_at, cancelled_at,
-			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		session.ID,
-		session.RequestID,
-		normalizePhone(session.Phone),
-		normalizeVerificationPurpose(session.Purpose),
-		strings.TrimSpace(session.DeepLinkTokenHash),
-		string(session.Status),
-		nullableInt64Ptr(session.TelegramUserID),
-		nullableInt64Ptr(session.TelegramChatID),
-		nullableString(session.TelegramUsername),
-		nullableString(session.TelegramFirstName),
-		nullableString(session.TelegramLastName),
-		nullableJSON(session.Device),
-		nullableJSON(session.Location),
-		session.ExpiresAt.UTC().Format(time.RFC3339Nano),
-		nullableTime(session.OpenedAt),
-		nullableTime(session.CodeSentAt),
-		nullableTime(session.VerifiedAt),
-		nullableTime(session.CancelledAt),
-		session.CreatedAt.UTC().Format(time.RFC3339Nano),
-		session.UpdatedAt.UTC().Format(time.RFC3339Nano),
-	)
-	if err != nil {
-		return domain.TelegramOTPSession{}, fmt.Errorf("insert telegram otp session: %w", err)
-	}
-	return r.GetTelegramOTPSessionByRequestID(ctx, session.RequestID)
-}
-
-func (r *Repository) GetTelegramOTPSessionByRequestID(ctx context.Context, requestID string) (domain.TelegramOTPSession, error) {
-	return r.getTelegramOTPSession(ctx, `request_id = ?`, strings.TrimSpace(requestID))
-}
-
-func (r *Repository) GetTelegramOTPSessionByTokenHash(ctx context.Context, tokenHash string) (domain.TelegramOTPSession, error) {
-	return r.getTelegramOTPSession(ctx, `deep_link_token_hash = ?`, strings.TrimSpace(tokenHash))
-}
-
-func (r *Repository) UpdateTelegramOTPSessionOpened(
-	ctx context.Context,
-	requestID string,
-	telegramUserID int64,
-	telegramChatID int64,
-	username string,
-	firstName string,
-	lastName string,
-	openedAt time.Time,
-) (domain.TelegramOTPSession, error) {
-	res, err := r.db.ExecContext(
-		ctx,
-		`UPDATE telegram_otp_sessions
-		 SET status = ?, telegram_user_id = ?, telegram_chat_id = ?, telegram_username = ?,
-		     telegram_first_name = ?, telegram_last_name = ?, opened_at = ?, updated_at = ?
-		 WHERE request_id = ?`,
-		string(domain.TelegramOTPSessionOpened),
-		telegramUserID,
-		telegramChatID,
-		nullableString(username),
-		nullableString(firstName),
-		nullableString(lastName),
-		openedAt.UTC().Format(time.RFC3339Nano),
-		time.Now().UTC().Format(time.RFC3339Nano),
-		strings.TrimSpace(requestID),
-	)
-	if err != nil {
-		return domain.TelegramOTPSession{}, fmt.Errorf("update telegram otp session opened: %w", err)
-	}
-	if err := ensureRowsAffected(res); err != nil {
-		return domain.TelegramOTPSession{}, err
-	}
-	return r.GetTelegramOTPSessionByRequestID(ctx, requestID)
-}
-
-func (r *Repository) UpdateTelegramOTPSessionCodeSent(ctx context.Context, requestID string, codeSentAt time.Time) (domain.TelegramOTPSession, error) {
-	res, err := r.db.ExecContext(
-		ctx,
-		`UPDATE telegram_otp_sessions
-		 SET status = ?, code_sent_at = ?, updated_at = ?
-		 WHERE request_id = ?`,
-		string(domain.TelegramOTPSessionCodeSent),
-		codeSentAt.UTC().Format(time.RFC3339Nano),
-		time.Now().UTC().Format(time.RFC3339Nano),
-		strings.TrimSpace(requestID),
-	)
-	if err != nil {
-		return domain.TelegramOTPSession{}, fmt.Errorf("update telegram otp session code_sent: %w", err)
-	}
-	if err := ensureRowsAffected(res); err != nil {
-		return domain.TelegramOTPSession{}, err
-	}
-	return r.GetTelegramOTPSessionByRequestID(ctx, requestID)
-}
-
-func (r *Repository) UpdateTelegramOTPSessionVerified(ctx context.Context, requestID string, verifiedAt time.Time) error {
-	res, err := r.db.ExecContext(
-		ctx,
-		`UPDATE telegram_otp_sessions
-		 SET status = ?, verified_at = ?, updated_at = ?
-		 WHERE request_id = ?`,
-		string(domain.TelegramOTPSessionVerified),
-		verifiedAt.UTC().Format(time.RFC3339Nano),
-		time.Now().UTC().Format(time.RFC3339Nano),
-		strings.TrimSpace(requestID),
-	)
-	if err != nil {
-		return fmt.Errorf("update telegram otp session verified: %w", err)
-	}
-	return ensureRowsAffected(res)
-}
-
-func (r *Repository) UpdateTelegramOTPSessionCancelled(ctx context.Context, requestID string, cancelledAt time.Time) error {
-	res, err := r.db.ExecContext(
-		ctx,
-		`UPDATE telegram_otp_sessions
-		 SET status = ?, cancelled_at = ?, updated_at = ?
-		 WHERE request_id = ?`,
-		string(domain.TelegramOTPSessionCancelled),
-		cancelledAt.UTC().Format(time.RFC3339Nano),
-		time.Now().UTC().Format(time.RFC3339Nano),
-		strings.TrimSpace(requestID),
-	)
-	if err != nil {
-		return fmt.Errorf("update telegram otp session cancelled: %w", err)
-	}
-	return ensureRowsAffected(res)
-}
-
-func (r *Repository) UpdateTelegramOTPSessionExpired(ctx context.Context, requestID string) error {
-	res, err := r.db.ExecContext(
-		ctx,
-		`UPDATE telegram_otp_sessions
-		 SET status = ?, updated_at = ?
-		 WHERE request_id = ?`,
-		string(domain.TelegramOTPSessionExpired),
-		time.Now().UTC().Format(time.RFC3339Nano),
-		strings.TrimSpace(requestID),
-	)
-	if err != nil {
-		return fmt.Errorf("update telegram otp session expired: %w", err)
-	}
-	return ensureRowsAffected(res)
-}
-
-func (r *Repository) ListTelegramOTPSessions(ctx context.Context, filter domain.TelegramOTPSessionListFilter) ([]domain.TelegramOTPSession, error) {
-	if filter.Limit <= 0 {
-		filter.Limit = 20
-	}
-	if filter.Limit > 100 {
-		filter.Limit = 100
-	}
-	if filter.Offset < 0 {
-		filter.Offset = 0
-	}
-
-	query := `SELECT id, request_id, phone, purpose, deep_link_token_hash, status,
-		telegram_user_id, telegram_chat_id, COALESCE(telegram_username, ''), COALESCE(telegram_first_name, ''),
-		COALESCE(telegram_last_name, ''), COALESCE(device_json, ''), COALESCE(location_json, ''),
-		expires_at, opened_at, code_sent_at, verified_at, cancelled_at, created_at, updated_at
-		FROM telegram_otp_sessions WHERE 1=1`
-	args := make([]any, 0, 5)
-	if phone := normalizePhone(filter.Phone); phone != "" {
-		query += ` AND phone = ?`
-		args = append(args, phone)
-	}
-	if status := strings.TrimSpace(filter.Status); status != "" {
-		query += ` AND status = ?`
-		args = append(args, status)
-	}
-	if purpose := normalizeVerificationPurpose(domain.AuthVerificationPurpose(filter.Purpose)); purpose != "" {
-		query += ` AND purpose = ?`
-		args = append(args, purpose)
-	}
-	query += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`
-	args = append(args, filter.Limit, filter.Offset)
-
-	rows, err := r.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list telegram otp sessions: %w", err)
-	}
-	defer rows.Close()
-
-	out := make([]domain.TelegramOTPSession, 0)
-	for rows.Next() {
-		session, err := scanTelegramOTPSession(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, session)
-	}
-
-	return out, rows.Err()
-}
 
 func (r *Repository) UpsertUserDevice(ctx context.Context, device domain.UserDevice) (domain.UserDevice, error) {
 	now := time.Now().UTC()
@@ -436,15 +222,14 @@ func (r *Repository) CreateAuthEvent(ctx context.Context, event domain.AuthEvent
 	_, err := r.db.ExecContext(
 		ctx,
 		`INSERT INTO auth_events (
-			id, user_id, phone, event_type, device_id, telegram_user_id,
+			id, user_id, phone, event_type, device_id,
 			ip_address, user_agent, metadata_json, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.ID,
 		nullableString(event.UserID),
 		normalizePhone(event.Phone),
 		strings.TrimSpace(event.EventType),
 		nullableString(event.DeviceID),
-		nullableInt64Ptr(event.TelegramUserID),
 		nullableString(event.IPAddress),
 		nullableString(event.UserAgent),
 		nullableString(event.MetadataJSON),
@@ -468,7 +253,7 @@ func (r *Repository) ListAuthEvents(ctx context.Context, filter domain.AuthEvent
 	}
 
 	query := `SELECT id, COALESCE(user_id, ''), COALESCE(phone, ''), event_type, COALESCE(device_id, ''),
-		telegram_user_id, COALESCE(ip_address, ''), COALESCE(user_agent, ''), COALESCE(metadata_json, ''), created_at
+		COALESCE(ip_address, ''), COALESCE(user_agent, ''), COALESCE(metadata_json, ''), created_at
 		FROM auth_events WHERE 1=1`
 	args := make([]any, 0, 6)
 	if phone := normalizePhone(filter.Phone); phone != "" {
@@ -509,100 +294,6 @@ func (r *Repository) ListAuthEvents(ctx context.Context, filter domain.AuthEvent
 		out = append(out, item)
 	}
 	return out, rows.Err()
-}
-
-func (r *Repository) getTelegramOTPSession(ctx context.Context, where string, arg any) (domain.TelegramOTPSession, error) {
-	query := `SELECT id, request_id, phone, purpose, deep_link_token_hash, status,
-		telegram_user_id, telegram_chat_id, COALESCE(telegram_username, ''), COALESCE(telegram_first_name, ''),
-		COALESCE(telegram_last_name, ''), COALESCE(device_json, ''), COALESCE(location_json, ''),
-		expires_at, opened_at, code_sent_at, verified_at, cancelled_at, created_at, updated_at
-		FROM telegram_otp_sessions WHERE ` + where
-	row := r.db.QueryRowContext(ctx, query, arg)
-	return scanTelegramOTPSession(row)
-}
-
-func scanTelegramOTPSession(scanner interface {
-	Scan(dest ...any) error
-}) (domain.TelegramOTPSession, error) {
-	var (
-		out          domain.TelegramOTPSession
-		purpose      string
-		status       string
-		deviceJSON   string
-		locationJSON string
-		expiresAt    string
-		openedAt     sql.NullString
-		codeSentAt   sql.NullString
-		verifiedAt   sql.NullString
-		cancelledAt  sql.NullString
-		createdAt    string
-		updatedAt    string
-		tgUserID     sql.NullInt64
-		tgChatID     sql.NullInt64
-	)
-	if err := scanner.Scan(
-		&out.ID,
-		&out.RequestID,
-		&out.Phone,
-		&purpose,
-		&out.DeepLinkTokenHash,
-		&status,
-		&tgUserID,
-		&tgChatID,
-		&out.TelegramUsername,
-		&out.TelegramFirstName,
-		&out.TelegramLastName,
-		&deviceJSON,
-		&locationJSON,
-		&expiresAt,
-		&openedAt,
-		&codeSentAt,
-		&verifiedAt,
-		&cancelledAt,
-		&createdAt,
-		&updatedAt,
-	); err != nil {
-		return domain.TelegramOTPSession{}, err
-	}
-	out.Phone = normalizePhone(out.Phone)
-	out.Purpose = domain.AuthVerificationPurpose(normalizeVerificationPurpose(domain.AuthVerificationPurpose(purpose)))
-	out.Status = domain.TelegramOTPSessionStatus(strings.TrimSpace(status))
-	out.ExpiresAt = parseSQLiteTime(expiresAt)
-	out.CreatedAt = parseSQLiteTime(createdAt)
-	out.UpdatedAt = parseSQLiteTime(updatedAt)
-	if tgUserID.Valid {
-		val := tgUserID.Int64
-		out.TelegramUserID = &val
-	}
-	if tgChatID.Valid {
-		val := tgChatID.Int64
-		out.TelegramChatID = &val
-	}
-	if openedAt.Valid {
-		out.OpenedAt = ptrTimeValue(parseSQLiteTime(openedAt.String))
-	}
-	if codeSentAt.Valid {
-		out.CodeSentAt = ptrTimeValue(parseSQLiteTime(codeSentAt.String))
-	}
-	if verifiedAt.Valid {
-		out.VerifiedAt = ptrTimeValue(parseSQLiteTime(verifiedAt.String))
-	}
-	if cancelledAt.Valid {
-		out.CancelledAt = ptrTimeValue(parseSQLiteTime(cancelledAt.String))
-	}
-	if deviceJSON != "" {
-		var device domain.AuthDevice
-		if err := json.Unmarshal([]byte(deviceJSON), &device); err == nil {
-			out.Device = &device
-		}
-	}
-	if locationJSON != "" {
-		var location domain.AuthLocation
-		if err := json.Unmarshal([]byte(locationJSON), &location); err == nil {
-			out.Location = &location
-		}
-	}
-	return out, nil
 }
 
 func (r *Repository) getUserDeviceByUserAndDeviceID(ctx context.Context, userID, deviceID string) (domain.UserDevice, error) {
@@ -673,11 +364,11 @@ func scanUserLocationEvent(scanner interface {
 	Scan(dest ...any) error
 }) (domain.UserLocationEvent, error) {
 	var (
-		out         domain.UserLocationEvent
-		latitude    sql.NullFloat64
-		longitude   sql.NullFloat64
-		accuracy    sql.NullFloat64
-		createdAt   string
+		out       domain.UserLocationEvent
+		latitude  sql.NullFloat64
+		longitude sql.NullFloat64
+		accuracy  sql.NullFloat64
+		createdAt string
 	)
 	if err := scanner.Scan(
 		&out.ID,
@@ -718,7 +409,6 @@ func scanAuthEvent(scanner interface {
 	var (
 		out       domain.AuthEvent
 		createdAt string
-		tgUserID  sql.NullInt64
 	)
 	if err := scanner.Scan(
 		&out.ID,
@@ -726,7 +416,6 @@ func scanAuthEvent(scanner interface {
 		&out.Phone,
 		&out.EventType,
 		&out.DeviceID,
-		&tgUserID,
 		&out.IPAddress,
 		&out.UserAgent,
 		&out.MetadataJSON,
@@ -735,37 +424,8 @@ func scanAuthEvent(scanner interface {
 		return domain.AuthEvent{}, err
 	}
 	out.Phone = normalizePhone(out.Phone)
-	if tgUserID.Valid {
-		val := tgUserID.Int64
-		out.TelegramUserID = &val
-	}
 	out.CreatedAt = parseSQLiteTime(createdAt)
 	return out, nil
-}
-
-func nullableTime(value *time.Time) any {
-	if value == nil || value.IsZero() {
-		return nil
-	}
-	return value.UTC().Format(time.RFC3339Nano)
-}
-
-func nullableJSON(value any) any {
-	if value == nil {
-		return nil
-	}
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return nil
-	}
-	return string(raw)
-}
-
-func nullableInt64Ptr(value *int64) any {
-	if value == nil {
-		return nil
-	}
-	return *value
 }
 
 func nullableFloat64(value *float64) any {
@@ -773,14 +433,6 @@ func nullableFloat64(value *float64) any {
 		return nil
 	}
 	return *value
-}
-
-func ptrTimeValue(value time.Time) *time.Time {
-	if value.IsZero() {
-		return nil
-	}
-	copy := value
-	return &copy
 }
 
 func nullableString(value string) any {
