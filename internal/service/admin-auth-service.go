@@ -33,6 +33,7 @@ func NewAdminAuthService(cfg config.AdminConfig, issuer AdminTokenIssuer, log *z
 	if log == nil {
 		log = zap.NewNop()
 	}
+
 	return &AdminAuthService{
 		username: strings.TrimSpace(cfg.Username),
 		password: strings.TrimSpace(cfg.Password),

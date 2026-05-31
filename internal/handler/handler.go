@@ -15,13 +15,14 @@ import (
 )
 
 type Handler struct {
-	app   service.IUserNotesService
-	jwt   service.IJWTService
-	otp   service.IOTPService
-	ads   service.IAdsService
-	admin service.IAdminAuthService
-	cfg   *config.Config
-	log   *zap.Logger
+	app       service.IUserNotesService
+	jwt       service.IJWTService
+	otp       service.IOTPService
+	ads       service.IAdsService
+	admin     service.IAdminAuthService
+	analytics service.IAnalyticsService
+	cfg       *config.Config
+	log       *zap.Logger
 }
 
 func New(services *service.Services, cfg *config.Config, log *zap.Logger) *Handler {
@@ -29,13 +30,14 @@ func New(services *service.Services, cfg *config.Config, log *zap.Logger) *Handl
 		log = zap.NewNop()
 	}
 	return &Handler{
-		app:   services.App,
-		jwt:   services.JWT,
-		otp:   services.OTP,
-		ads:   services.Ads,
-		admin: services.Admin,
-		cfg:   cfg,
-		log:   log,
+		app:       services.App,
+		jwt:       services.JWT,
+		otp:       services.OTP,
+		ads:       services.Ads,
+		admin:     services.Admin,
+		analytics: services.Analytics,
+		cfg:       cfg,
+		log:       log,
 	}
 }
 
@@ -77,6 +79,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/admin/users/{id}/devices/{device_id}/deactivate", h.AdminDeactivateUserDevice)
 	mux.HandleFunc("GET /api/v1/admin/users/{id}/locations", h.AdminListUserLocations)
 	mux.HandleFunc("GET /api/v1/admin/auth-events", h.AdminListAuthEvents)
+	mux.HandleFunc("GET /api/v1/admin/devices", h.AdminListDevices)
+	mux.HandleFunc("GET /api/v1/admin/analytics/overview", h.AdminAnalyticsOverview)
+	mux.HandleFunc("GET /api/v1/admin/analytics/geo", h.AdminAnalyticsGeo)
 	mux.HandleFunc("GET /api/v1/admin/testing/otp/latest", h.AdminLatestOTP)
 	mux.HandleFunc("POST /api/v1/admin/testing/auth/access-token", h.AdminTestingAccessToken)
 

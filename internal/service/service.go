@@ -96,12 +96,19 @@ type IAdminAuthService interface {
 	Login(ctx context.Context, username, password string) (AdminLoginResponse, error)
 }
 
+type IAnalyticsService interface {
+	Overview(ctx context.Context) (domain.AnalyticsOverview, error)
+	Geo(ctx context.Context, filter domain.GeoFilter) (domain.GeoResult, error)
+	ListDevices(ctx context.Context, filter domain.AdminDeviceListFilter) ([]domain.UserDevice, int, error)
+}
+
 type Services struct {
-	App   IUserNotesService
-	JWT   IJWTService
-	OTP   IOTPService
-	Ads   IAdsService
-	Admin IAdminAuthService
+	App       IUserNotesService
+	JWT       IJWTService
+	OTP       IOTPService
+	Ads       IAdsService
+	Admin     IAdminAuthService
+	Analytics IAnalyticsService
 }
 
 func NewServices(
@@ -124,12 +131,14 @@ func NewServices(
 	otpService := NewOTPService(repositories.Auth, otpCfg, log, NewWhapiSender(appConfig.Whapi, appConfig.OTP.ExpiresIn, log))
 	adsService := NewAdsService(repositories.Auth, log)
 	adminService := NewAdminAuthService(appConfig.Admin, jwtService, log)
+	analyticsService := NewAnalyticsService(repositories.Auth, log)
 
 	return &Services{
-		App:   appService,
-		JWT:   jwtService,
-		OTP:   otpService,
-		Ads:   adsService,
-		Admin: adminService,
+		App:       appService,
+		JWT:       jwtService,
+		OTP:       otpService,
+		Ads:       adsService,
+		Admin:     adminService,
+		Analytics: analyticsService,
 	}
 }

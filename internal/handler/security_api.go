@@ -30,43 +30,9 @@ func (h *Handler) AdminListUserDevices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type deviceResponse struct {
-		ID           string    `json:"id"`
-		UserID       string    `json:"user_id"`
-		PhoneMasked  string    `json:"phone_masked"`
-		DeviceID     string    `json:"device_id"`
-		Platform     string    `json:"platform"`
-		AppVersion   string    `json:"app_version,omitempty"`
-		OSVersion    string    `json:"os_version,omitempty"`
-		DeviceModel  string    `json:"device_model,omitempty"`
-		Manufacturer string    `json:"manufacturer,omitempty"`
-		HasPushToken bool      `json:"has_push_token"`
-		FirstSeenAt  time.Time `json:"first_seen_at"`
-		LastSeenAt   time.Time `json:"last_seen_at"`
-		IsActive     bool      `json:"is_active"`
-		CreatedAt    time.Time `json:"created_at"`
-		UpdatedAt    time.Time `json:"updated_at"`
-	}
-
-	out := make([]deviceResponse, 0, len(devices))
+	out := make([]adminDeviceResponse, 0, len(devices))
 	for _, device := range devices {
-		out = append(out, deviceResponse{
-			ID:           device.ID,
-			UserID:       device.UserID,
-			PhoneMasked:  maskPhone(device.Phone),
-			DeviceID:     device.DeviceID,
-			Platform:     device.Platform,
-			AppVersion:   device.AppVersion,
-			OSVersion:    device.OSVersion,
-			DeviceModel:  device.DeviceModel,
-			Manufacturer: device.Manufacturer,
-			HasPushToken: strings.TrimSpace(device.PushToken) != "",
-			FirstSeenAt:  device.FirstSeenAt,
-			LastSeenAt:   device.LastSeenAt,
-			IsActive:     device.IsActive,
-			CreatedAt:    device.CreatedAt,
-			UpdatedAt:    device.UpdatedAt,
-		})
+		out = append(out, toAdminDeviceResponse(device))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
