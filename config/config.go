@@ -94,7 +94,7 @@ func NewConfig() (*Config, error) {
 			Password: "QRT123",
 		},
 		Whapi: WhapiConfig{
-			BaseURL: "https://whapi.kz",
+			BaseURL: "https://whapi.moonami.kz",
 			Token:   "",
 			Timeout: 10 * time.Second,
 		},
