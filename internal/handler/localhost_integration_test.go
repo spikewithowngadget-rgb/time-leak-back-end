@@ -393,8 +393,8 @@ func TestLocalhostServer_OTPRequestSendsWhapiMessage(t *testing.T) {
 	if got.Auth != "Bearer redacted-test-token" {
 		t.Fatalf("whapi authorization header mismatch")
 	}
-	if got.Body.To != "77471850499" {
-		t.Fatalf("whapi to: got %q want 77471850499", got.Body.To)
+	if got.Body.To != "+77471850499" {
+		t.Fatalf("whapi to: got %q want +77471850499", got.Body.To)
 	}
 	if !regexp.MustCompile(`^Ваш код подтверждения Timeleak: [0-9]{4}\. Код действителен 5 минут\.$`).MatchString(got.Body.Text) {
 		t.Fatalf("unexpected whapi text: %q", got.Body.Text)

@@ -75,7 +75,7 @@ func (s *WhapiSender) SendOTP(ctx context.Context, phone string, code string) er
 	}
 
 	payload := whapiMessageRequest{
-		To:   strings.TrimPrefix(normalizedPhone, "+"),
+		To:   normalizedPhone,
 		Text: otpMessageText(strings.TrimSpace(code), s.ttl),
 	}
 	var body bytes.Buffer

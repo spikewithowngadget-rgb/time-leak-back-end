@@ -45,8 +45,8 @@ func TestWhapiSender_SendOTP_PostsExpectedJSON(t *testing.T) {
 	if gotAuth != "Bearer redacted-test-token" {
 		t.Fatalf("authorization header mismatch")
 	}
-	if gotBody.To != "77471850499" {
-		t.Fatalf("to: got %q want 77471850499", gotBody.To)
+	if gotBody.To != "+77471850499" {
+		t.Fatalf("to: got %q want +77471850499", gotBody.To)
 	}
 	wantText := "Ваш код подтверждения Timeleak: 1234. Код действителен 5 минут."
 	if gotBody.Text != wantText {
