@@ -18,7 +18,6 @@ func loadDotEnv(path string) error {
 		return fmt.Errorf("open .env: %w", err)
 	}
 	defer file.Close()
-
 	scanner := bufio.NewScanner(file)
 	lineNo := 0
 	for scanner.Scan() {
