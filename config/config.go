@@ -71,6 +71,7 @@ type Config struct {
 	Resend                 ResendConfig
 	EmailOTP               EmailOTPConfig
 	Admin                  AdminConfig
+	Sharing                SharingConfig
 }
 
 func NewConfig() (*Config, error) {
@@ -358,6 +359,11 @@ func NewConfig() (*Config, error) {
 		}
 	}
 
+	sharing, err := loadSharingConfig()
+	if err != nil {
+		return nil, err
+	}
+	cfg.Sharing = sharing
 	return cfg, nil
 }
 

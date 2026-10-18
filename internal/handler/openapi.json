@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Timeleak API",
-    "version": "1.2.0",
-    "description": "Versioned API under /api/v1 with WhatsApp OTP auth, refresh rotation, admin auth, and ads rotation. Notes API: выбранный день note_date, метаданные для календаря, загрузка файлов по требованию и обратная совместимость со старыми клиентами. OTP доступен по двум каналам: WhatsApp через WHAPI и email через Resend. Пользователь выбирает нужный канал; подтверждать оба подряд не требуется."
+    "version": "1.3.0",
+    "description": "Versioned API under /api/v1 with WhatsApp OTP auth, refresh rotation, admin auth, and ads rotation. Notes API: выбранный день note_date, метаданные для календаря, загрузка файлов по требованию и обратная совместимость со старыми клиентами. OTP доступен по двум каналам: WhatsApp через WHAPI и email через Resend. Пользователь выбирает нужный канал; подтверждать оба подряд не требуется. Новые функции заметок: текстовые и аудио-заголовки, one_time/recurring и публичный шеринг. URL API остаются /api/v1; обновление расширяет существующие контракты."
   },
   "servers": [
     {
@@ -13,7 +13,7 @@
   "tags": [
     {
       "name": "Notes",
-      "description": "Flutter: 1) сохраняйте выбранный день в note_date; 2) календарь загружает fields=meta постранично до has_more=false; 3) бейджи строятся по note_date; 4) при выборе дня запросите by-date и скачайте только его файлы. При note_date_source=created_at исходный выбранный день неизвестен — его можно восстановить через PUT из локальной БД клиента."
+      "description": "Заметки пользователя. Календарь: fields=meta, пагинация до has_more=false; для recurring используйте occurrences, для one_time — note_date и is_completed. Файлы загружайте при открытии дня."
     },
     {
       "name": "OTP — WhatsApp",
@@ -22,6 +22,18 @@
     {
       "name": "OTP — Email",
       "description": "Код на электронную почту через Resend. Сначала запросите письмо, затем передайте request_id и код из письма в проверку. Это отдельный канал: email-код нельзя проверить через WhatsApp-маршрут и наоборот. Ключ Resend передавать с клиента не нужно."
+    },
+    {
+      "name": "Sharing",
+      "description": "Share-токены, публичные превью и временные signed URL файлов."
+    },
+    {
+      "name": "Admin",
+      "description": "Существующие административные маршруты; требуется admin Bearer token."
+    },
+    {
+      "name": "Documentation",
+      "description": "Swagger UI и OpenAPI JSON."
     }
   ],
   "paths": {
@@ -435,7 +447,7 @@
         ],
         "operationId": "createUserNote",
         "summary": "Создать заметку на выбранный день",
-        "description": "Передавайте note_date для выбранного дня календаря. createdAt — время создания на сервере. Файлы необязательны, максимум 5. В multipart повторяйте поле files для каждого файла. JSON поддерживается для заметок без вложений.\n\nДля старых клиентов отсутствие note_date разрешено: используется день создания в UTC, note_date_source=created_at. Новому Flutter-клиенту следует всегда передавать note_date. Метаданные определяются автоматически.",
+        "description": "Передавайте note_date для выбранного дня календаря. createdAt — время создания на сервере. Файлы необязательны, максимум 5. В multipart повторяйте поле files для каждого файла. JSON поддерживается для заметок без вложений.\n\nДля старых клиентов отсутствие note_date разрешено: используется день создания в UTC, note_date_source=created_at. Новому Flutter-клиенту следует всегда передавать note_date. Метаданные определяются автоматически.\n\nНовые поля: title, lifecycle, recurrence_rule; в multipart также title_audio. Текст и аудио могут присутствовать одновременно. title=null/пустой сбрасывает заголовок, отсутствие поля в PUT сохраняет значение. Файл title_audio проверяется по содержимому, максимум 2 MiB и 30 секунд.",
         "security": [
           {
             "BearerAuth": []
@@ -460,7 +472,13 @@
                   "userId": "550e8400-e29b-41d4-a716-446655440099",
                   "note_files": [
                     "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
-                  ]
+                  ],
+                  "title": "Семейное фото",
+                  "title_audio_url": null,
+                  "lifecycle": "one_time",
+                  "recurrence_rule": null,
+                  "is_completed": false,
+                  "occurrences": []
                 }
               }
             }
@@ -529,6 +547,26 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Аудио-заголовок превышает 2 MiB.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "FFmpeg/ffprobe недоступен на сервере; запрос с title_audio не сохранён.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -542,6 +580,9 @@
                 "files": {
                   "style": "form",
                   "explode": true
+                },
+                "title_audio": {
+                  "contentType": "audio/mp4, audio/aac, audio/mpeg, audio/ogg"
                 }
               }
             },
@@ -572,7 +613,7 @@
         ],
         "operationId": "listUserNotes",
         "summary": "Заметки: календарь, диапазон или старый список",
-        "description": "Для календаря: GET /api/v1/auth/notes?from=2036-10-01&to=2036-10-31&fields=meta. Загружайте все страницы до has_more=false, затем отображайте бейджи по note_date. Файлы на этом шаге не скачивайте.\n\nДиапазон фильтруется по выбранному дню note_date, а не createdAt. Порядок: note_date ASC, createdAt ASC, id ASC. Повторяющиеся известные параметры и недопустимые значения возвращают 400.\n\nБез from/to и без fields/page/limit сохраняется устаревшая выдача всех заметок без пагинации с прежними полями; этот режим не используйте в новом клиенте.\n\nПри конкурентном добавлении/удалении записи между запросами страниц страницы могут сдвигаться: при необходимости повторите синхронизацию.",
+        "description": "Для календаря: GET /api/v1/auth/notes?from=2036-10-01&to=2036-10-31&fields=meta. Загружайте все страницы до has_more=false, затем отображайте бейджи по note_date. Файлы на этом шаге не скачивайте.\n\nДиапазон фильтруется по выбранному дню note_date, а не createdAt. Порядок: note_date ASC, createdAt ASC, id ASC. Повторяющиеся известные параметры и недопустимые значения возвращают 400.\n\nБез from/to и без fields/page/limit сохраняется устаревшая выдача всех заметок без пагинации с прежними полями; этот режим не используйте в новом клиенте.\n\nПри конкурентном добавлении/удалении записи между запросами страниц страницы могут сдвигаться: при необходимости повторите синхронизацию.\n\nRecurring выбираются также по виртуальным датам occurrences внутри диапазона, даже когда исходный note_date находится раньше from. total считает заметки, а не occurrences. 29 февраля в невисокосном году = 28 февраля; 31-е = последний день короткого месяца. Завершённые one_time остаются в выдаче для архива; клиент скрывает их бейджи по is_completed. Без диапазона старые поля сохранены, новые добавлены, occurrences=[].",
         "security": [
           {
             "BearerAuth": []
@@ -608,7 +649,12 @@
                           "note_date_source": "selected",
                           "file_count": 1,
                           "file_type": "image",
-                          "createdAt": "2026-10-17T09:00:00Z"
+                          "createdAt": "2026-10-17T09:00:00Z",
+                          "title": "Семейное фото",
+                          "lifecycle": "one_time",
+                          "recurrence_rule": null,
+                          "is_completed": false,
+                          "occurrences": []
                         }
                       ],
                       "total": 1,
@@ -632,7 +678,13 @@
                           "userId": "550e8400-e29b-41d4-a716-446655440099",
                           "note_files": [
                             "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
-                          ]
+                          ],
+                          "title": "Семейное фото",
+                          "title_audio_url": null,
+                          "lifecycle": "one_time",
+                          "recurrence_rule": null,
+                          "is_completed": false,
+                          "occurrences": []
                         }
                       ],
                       "total": 1,
@@ -662,7 +714,13 @@
                           "note_files": [
                             "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
                           ],
-                          "createdAt": "2026-10-17T09:00:00Z"
+                          "createdAt": "2026-10-17T09:00:00Z",
+                          "title": "Семейное фото",
+                          "title_audio_url": null,
+                          "lifecycle": "one_time",
+                          "recurrence_rule": null,
+                          "is_completed": false,
+                          "occurrences": []
                         }
                       ],
                       "total": 1
@@ -794,7 +852,7 @@
         ],
         "operationId": "listUserNotesByDate",
         "summary": "Все заметки выбранного дня с URL файлов",
-        "description": "Вызывайте при выборе дня в календаре. Фильтр использует note_date и возвращает все заметки дня без пагинации. После ответа скачивайте только нужные файлы из note_files. Порядок: createdAt ASC, id ASC. Если заметок нет: {\"data\":[],\"total\":0}.",
+        "description": "Вызывайте при выборе дня в календаре. Фильтр использует note_date и возвращает все заметки дня без пагинации. После ответа скачивайте только нужные файлы из note_files. Порядок: createdAt ASC, id ASC. Если заметок нет: {\"data\":[],\"total\":0}.\n\nВключает recurring с occurrence на выбранный день. note_date остаётся исходной датой, occurrences содержит выбранную дату. Завершённые one_time доступны для истории.",
         "security": [
           {
             "BearerAuth": []
@@ -821,7 +879,13 @@
                       "userId": "550e8400-e29b-41d4-a716-446655440099",
                       "note_files": [
                         "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
-                      ]
+                      ],
+                      "title": "Семейное фото",
+                      "title_audio_url": null,
+                      "lifecycle": "one_time",
+                      "recurrence_rule": null,
+                      "is_completed": false,
+                      "occurrences": []
                     }
                   ],
                   "total": 1
@@ -931,7 +995,13 @@
                   "userId": "550e8400-e29b-41d4-a716-446655440099",
                   "note_files": [
                     "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
-                  ]
+                  ],
+                  "title": "Семейное фото",
+                  "title_audio_url": null,
+                  "lifecycle": "one_time",
+                  "recurrence_rule": null,
+                  "is_completed": false,
+                  "occurrences": []
                 }
               }
             }
@@ -1020,7 +1090,7 @@
         ],
         "operationId": "updateUserNote",
         "summary": "Изменить заметку, дату или вложения",
-        "description": "Все поля необязательны. Отсутствующее note_type сохраняет название. Отсутствующее note_date сохраняет текущий день и его источник; переданное note_date устанавливает note_date_source=selected. Это также позволяет восстановить дату старой заметки из локальной БД приложения.\n\nНепустой список files заменяет все старые вложения. Отсутствие files сохраняет их; пустым списком удалить вложения нельзя. file_count и file_type пересчитываются автоматически. createdAt не меняется.",
+        "description": "Все поля необязательны. Отсутствующее note_type сохраняет название. Отсутствующее note_date сохраняет текущий день и его источник; переданное note_date устанавливает note_date_source=selected. Это также позволяет восстановить дату старой заметки из локальной БД приложения.\n\nНепустой список files заменяет все старые вложения. Отсутствие files сохраняет их; пустым списком удалить вложения нельзя. file_count и file_type пересчитываются автоматически. createdAt не меняется.\n\nНовые поля: title, lifecycle, recurrence_rule; в multipart также title_audio. Текст и аудио могут присутствовать одновременно. title=null/пустой сбрасывает заголовок, отсутствие поля в PUT сохраняет значение. Файл title_audio проверяется по содержимому, максимум 2 MiB и 30 секунд.",
         "security": [
           {
             "BearerAuth": []
@@ -1045,7 +1115,13 @@
                   "userId": "550e8400-e29b-41d4-a716-446655440099",
                   "note_files": [
                     "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
-                  ]
+                  ],
+                  "title": "Семейное фото",
+                  "title_audio_url": null,
+                  "lifecycle": "one_time",
+                  "recurrence_rule": null,
+                  "is_completed": false,
+                  "occurrences": []
                 }
               }
             }
@@ -1114,6 +1190,26 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Аудио-заголовок превышает 2 MiB.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "FFmpeg/ffprobe недоступен на сервере; запрос с title_audio не сохранён.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
           }
         },
         "parameters": [
@@ -1138,6 +1234,9 @@
                 "files": {
                   "style": "form",
                   "explode": true
+                },
+                "title_audio": {
+                  "contentType": "audio/mp4, audio/aac, audio/mpeg, audio/ogg"
                 }
               }
             },
@@ -1298,8 +1397,35 @@
           },
           "404": {
             "description": "File not found"
+          },
+          "401": {
+            "description": "Для аудио-заголовка требуется пользовательский JWT.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "JWT имеет неподходящую роль.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
           }
-        }
+        },
+        "description": " Основные старые файлы публичны. Для note-title-audio/{noteId}.m4a требуется пользовательский Bearer JWT владельца; по публичной share-ссылке используйте отдельный signed URL из shared-ответа.",
+        "security": [
+          {},
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/api/v1/users/{id}": {
@@ -1364,7 +1490,7 @@
     "/api/v1/notes": {
       "post": {
         "summary": "Create note by userId",
-        "description": "Старый маршрут создания по userId, сохранен для совместимости. Новые клиенты должны использовать POST /api/v1/auth/notes с Bearer token. Поддерживает note_date; при отсутствии используется день создания в UTC.",
+        "description": "Старый маршрут создания по userId, сохранен для совместимости. Новые клиенты должны использовать POST /api/v1/auth/notes с Bearer token. Поддерживает note_date; при отсутствии используется день создания в UTC.\n\nНовые поля: title, lifecycle, recurrence_rule; в multipart также title_audio. Текст и аудио могут присутствовать одновременно. title=null/пустой сбрасывает заголовок, отсутствие поля в PUT сохраняет значение. Файл title_audio проверяется по содержимому, максимум 2 MiB и 30 секунд.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1376,6 +1502,9 @@
                 "files": {
                   "style": "form",
                   "explode": true
+                },
+                "title_audio": {
+                  "contentType": "audio/mp4, audio/aac, audio/mpeg, audio/ogg"
                 }
               }
             },
@@ -1405,7 +1534,13 @@
                   "userId": "550e8400-e29b-41d4-a716-446655440099",
                   "note_files": [
                     "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
-                  ]
+                  ],
+                  "title": "Семейное фото",
+                  "title_audio_url": null,
+                  "lifecycle": "one_time",
+                  "recurrence_rule": null,
+                  "is_completed": false,
+                  "occurrences": []
                 }
               }
             }
@@ -1445,6 +1580,26 @@
                 },
                 "example": {
                   "error": "internal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Аудио-заголовок превышает 2 MiB.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "FFmpeg/ffprobe недоступен на сервере; запрос с title_audio не сохранён.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
                 }
               }
             }
@@ -1724,22 +1879,12 @@
     "/api/delete/user": {
       "delete": {
         "summary": "Deactivate user (soft delete)",
-        "description": "Sets isActive=false on the user record. The user is NOT removed from the database. Requires admin JWT. Login is blocked for deactivated users.",
+        "description": "Деактивация текущего пользователя по user Bearer JWT. Тело не требуется и не читается. Отзывает refresh-токены; данные и файлы физически не удаляются.",
         "security": [
           {
             "BearerAuth": []
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DeleteUserRequest"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "User deactivated",
@@ -1751,17 +1896,31 @@
               }
             }
           },
-          "400": {
-            "description": "Missing or invalid user_id"
-          },
           "401": {
-            "description": "Unauthorized — missing or invalid admin token"
+            "description": "Отсутствует, недействителен или истёк пользовательский JWT.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
           },
           "404": {
             "description": "User not found"
           },
           "500": {
             "description": "Internal server error"
+          },
+          "403": {
+            "description": "Токен не имеет роли user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
           }
         }
       }
@@ -2024,6 +2183,1412 @@
           }
         }
       }
+    },
+    "/api/v1/auth/notes/{id}/share": {
+      "post": {
+        "tags": [
+          "Sharing"
+        ],
+        "operationId": "createNoteShare",
+        "summary": "Создать публичную ссылку на заметку",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": ""
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NoteShareRequest"
+              },
+              "example": {
+                "expires_in": 168
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Ссылка создана",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteShareResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректный запрос.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Требуется access token пользователя.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Неподходящая роль токена.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заметка не найдена или принадлежит другому пользователю.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Создаёт отдельный случайный токен для заметки текущего пользователя. По умолчанию 7 дней. При удалении заметки токены каскадно удаляются. Новая ссылка не отзывает предыдущие."
+      }
+    },
+    "/api/v1/auth/notes/{id}/title-audio": {
+      "delete": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "deleteNoteTitleAudio",
+        "summary": "Удалить только аудио-заголовок",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": ""
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Обновлённая заметка; title_audio_url=null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Note"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректный запрос.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Требуется access token пользователя.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Неподходящая роль токена.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заметка не найдена или принадлежит другому пользователю.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Сохраняет текстовый заголовок, основные файлы, дату и повторение. Повторное удаление существующей заметки без аудио также возвращает 200."
+      }
+    },
+    "/api/v1/notes/shared/{token}": {
+      "get": {
+        "tags": [
+          "Sharing"
+        ],
+        "operationId": "getSharedNote",
+        "summary": "Публичные данные заметки для импорта",
+        "security": [],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{12}$"
+            },
+            "description": ""
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Данные и временные URL файлов",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedNote"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Токен неизвестен или оригинальная заметка удалена.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Срок share-ссылки истёк.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Авторизация не нужна. Не возвращает userId, email или полный телефон владельца. file_sizes позволяет запросить согласие перед загрузкой большого файла. Для сохранения скачайте файлы и создайте свою заметку через POST /api/v1/auth/notes; оригинальный id не используйте как id импортированной заметки."
+      }
+    },
+    "/s/{token}": {
+      "get": {
+        "tags": [
+          "Sharing"
+        ],
+        "operationId": "getSharedNotePage",
+        "summary": "HTML-превью share-ссылки для мессенджеров",
+        "security": [],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{12}$"
+            },
+            "description": ""
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HTML с Open Graph и ссылкой timeleak://note/{token}",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Токен неизвестен или оригинальная заметка удалена.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Срок share-ссылки истёк.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          }
+        },
+        "description": "OG title/description/image/url, миниатюра изображения либо иконка типа файла. На мобильных браузерах пытается открыть фиксированную схему timeleak://note/{token}. Настройки платформ и магазинов приложений находятся вне backend."
+      }
+    },
+    "/api/v1/notes/shared/{token}/files/{asset}": {
+      "get": {
+        "tags": [
+          "Sharing"
+        ],
+        "operationId": "getSharedNoteFile",
+        "summary": "Скачать файл по временному signed URL",
+        "security": [],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{12}$"
+            },
+            "description": ""
+          },
+          {
+            "name": "expires",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Unix timestamp окончания действия URL."
+          },
+          {
+            "name": "signature",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "description": "HMAC-SHA256; используйте URL из ответа shared без изменения."
+          },
+          {
+            "name": "asset",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Индекс в note_files (с 0) либо title-audio."
+            },
+            "description": ""
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Содержимое файла",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Часть файла для проигрывателя",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Подпись неверна или URL истёк.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Токен неизвестен или оригинальная заметка удалена.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Срок share-ссылки истёк.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Подпись привязана к токену, конкретному файлу и сроку. Даже действительная подпись не открывает удалённую заметку или истёкшую share-ссылку."
+      }
+    },
+    "/api/v1/notes/shared/{token}/preview": {
+      "get": {
+        "tags": [
+          "Sharing"
+        ],
+        "operationId": "getSharedNotePreview",
+        "summary": "PNG-превью 600×315 по signed URL",
+        "security": [],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{12}$"
+            },
+            "description": ""
+          },
+          {
+            "name": "expires",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Unix timestamp окончания действия URL."
+          },
+          {
+            "name": "signature",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "description": "HMAC-SHA256; используйте URL из ответа shared без изменения."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Миниатюра PNG",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Подпись неверна или URL истёк.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Токен неизвестен или оригинальная заметка удалена.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Срок share-ссылки истёк.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users/{id}/devices": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "adminUserDevices",
+        "summary": "Устройства пользователя",
+        "description": "Существующий маршрут. Требуется admin Bearer token. Документация добавлена без изменения поведения.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": ""
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminDevicesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректный запрос.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Требуется access token пользователя.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Неподходящая роль токена.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заметка не найдена или принадлежит другому пользователю.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users/{id}/devices/{device_id}/deactivate": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "adminDeactivateDevice",
+        "summary": "Деактивировать устройство",
+        "description": "Существующий маршрут. Требуется admin Bearer token. Документация добавлена без изменения поведения.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": ""
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": ""
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректный запрос.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Требуется access token пользователя.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Неподходящая роль токена.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заметка не найдена или принадлежит другому пользователю.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users/{id}/locations": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "adminUserLocations",
+        "summary": "События местоположения пользователя",
+        "description": "Существующий маршрут. Требуется admin Bearer token. Документация добавлена без изменения поведения.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": ""
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20
+            },
+            "description": ""
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0
+            },
+            "description": ""
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "RFC3339 timestamp."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "RFC3339 timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminLocationsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректный запрос.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Требуется access token пользователя.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Неподходящая роль токена.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заметка не найдена или принадлежит другому пользователю.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/auth-events": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "adminAuthEvents",
+        "summary": "События авторизации",
+        "description": "Существующий маршрут. Требуется admin Bearer token. Документация добавлена без изменения поведения.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20
+            },
+            "description": ""
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0
+            },
+            "description": ""
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "RFC3339 timestamp."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "RFC3339 timestamp."
+          },
+          {
+            "name": "phone",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": ""
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": ""
+          },
+          {
+            "name": "event_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": ""
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAuthEventsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректный запрос.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Требуется access token пользователя.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Неподходящая роль токена.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заметка не найдена или принадлежит другому пользователю.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/devices": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "adminDevices",
+        "summary": "Все устройства с фильтрами",
+        "description": "Существующий маршрут. Требуется admin Bearer token. Документация добавлена без изменения поведения.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20
+            },
+            "description": ""
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0
+            },
+            "description": ""
+          },
+          {
+            "name": "platform",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "ios",
+                "android"
+              ]
+            },
+            "description": ""
+          },
+          {
+            "name": "active",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            },
+            "description": ""
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": ""
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminDevicesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректный запрос.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Требуется access token пользователя.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Неподходящая роль токена.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заметка не найдена или принадлежит другому пользователю.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/analytics/overview": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "adminAnalyticsOverview",
+        "summary": "Сводная аналитика",
+        "description": "Существующий маршрут. Требуется admin Bearer token. Документация добавлена без изменения поведения.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsOverview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректный запрос.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Требуется access token пользователя.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Неподходящая роль токена.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заметка не найдена или принадлежит другому пользователю.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/analytics/geo": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "adminAnalyticsGeo",
+        "summary": "Географическая аналитика",
+        "description": "Существующий маршрут. Требуется admin Bearer token. Документация добавлена без изменения поведения.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "RFC3339 timestamp."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "RFC3339 timestamp."
+          },
+          {
+            "name": "platform",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "ios",
+                "android"
+              ]
+            },
+            "description": ""
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "gps",
+                "network",
+                "manual",
+                "unknown"
+              ]
+            },
+            "description": ""
+          },
+          {
+            "name": "active",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": ""
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1000
+            },
+            "description": ""
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeoResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректный запрос.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Требуется access token пользователя.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Неподходящая роль токена.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заметка не найдена или принадлежит другому пользователю.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/swagger": {
+      "get": {
+        "tags": [
+          "Documentation"
+        ],
+        "operationId": "swaggerUI",
+        "summary": "Swagger UI",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Swagger UI",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/swagger.json": {
+      "get": {
+        "tags": [
+          "Documentation"
+        ],
+        "operationId": "swaggerDocument",
+        "summary": "Полная OpenAPI спецификация",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.0.3",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2123,6 +3688,12 @@
           },
           "verification_token": {
             "type": "string"
+          },
+          "device": {
+            "$ref": "#/components/schemas/AuthDevice"
+          },
+          "location": {
+            "$ref": "#/components/schemas/AuthLocation"
           }
         }
       },
@@ -2152,6 +3723,16 @@
           "password": {
             "type": "string",
             "example": "StrongPass123!"
+          },
+          "device": {
+            "$ref": "#/components/schemas/AuthDevice"
+          },
+          "location": {
+            "$ref": "#/components/schemas/AuthLocation"
+          },
+          "verification_token": {
+            "type": "string",
+            "description": "Необязательный токен подтверждения телефона; существующий парольный вход сохранён."
           }
         }
       },
@@ -2196,6 +3777,12 @@
           },
           "verification_token": {
             "type": "string"
+          },
+          "device": {
+            "$ref": "#/components/schemas/AuthDevice"
+          },
+          "location": {
+            "$ref": "#/components/schemas/AuthLocation"
           }
         }
       },
@@ -2264,6 +3851,38 @@
               "format": "binary"
             },
             "description": "От 0 до 5 файлов. Каждый файл передается отдельной multipart-частью с одинаковым именем files. При PUT непустой список заменяет все прежние файлы; отсутствие файлов сохраняет вложения."
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 200,
+            "description": "Отдельный текстовый заголовок. HTML удаляется, пробелы по краям обрезаются. null или пустая строка сбрасывает на «note_type · YYYY-MM-DD». В PUT отсутствие поля сохраняет заголовок."
+          },
+          "lifecycle": {
+            "type": "string",
+            "enum": [
+              "one_time",
+              "recurring"
+            ],
+            "default": "one_time",
+            "description": "В PUT отсутствие сохраняет прежний тип. Смена типа сбрасывает is_completed=false."
+          },
+          "recurrence_rule": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 50,
+            "enum": [
+              "FREQ=YEARLY",
+              "FREQ=MONTHLY",
+              "FREQ=WEEKLY",
+              null
+            ],
+            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null."
+          },
+          "title_audio": {
+            "type": "string",
+            "format": "binary",
+            "description": "Отдельный аудио-заголовок, не входит в files/file_count. m4a/aac/mp3/ogg, максимум 2 MiB и 30 секунд; содержимое проверяется, сохраняется как AAC/M4A. В PUT заменяет прежнее аудио; отсутствие сохраняет. Удаление — DELETE /auth/notes/{id}/title-audio."
           }
         }
       },
@@ -2299,6 +3918,38 @@
               "format": "binary"
             },
             "description": "От 0 до 5 файлов. Каждый файл передается отдельной multipart-частью с одинаковым именем files. При PUT непустой список заменяет все прежние файлы; отсутствие файлов сохраняет вложения."
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 200,
+            "description": "Отдельный текстовый заголовок. HTML удаляется, пробелы по краям обрезаются. null или пустая строка сбрасывает на «note_type · YYYY-MM-DD». В PUT отсутствие поля сохраняет заголовок."
+          },
+          "lifecycle": {
+            "type": "string",
+            "enum": [
+              "one_time",
+              "recurring"
+            ],
+            "default": "one_time",
+            "description": "В PUT отсутствие сохраняет прежний тип. Смена типа сбрасывает is_completed=false."
+          },
+          "recurrence_rule": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 50,
+            "enum": [
+              "FREQ=YEARLY",
+              "FREQ=MONTHLY",
+              "FREQ=WEEKLY",
+              null
+            ],
+            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null."
+          },
+          "title_audio": {
+            "type": "string",
+            "format": "binary",
+            "description": "Отдельный аудио-заголовок, не входит в files/file_count. m4a/aac/mp3/ogg, максимум 2 MiB и 30 секунд; содержимое проверяется, сохраняется как AAC/M4A. В PUT заменяет прежнее аудио; отсутствие сохраняет. Удаление — DELETE /auth/notes/{id}/title-audio."
           }
         }
       },
@@ -2326,6 +3977,38 @@
               "format": "binary"
             },
             "description": "От 0 до 5 файлов. Каждый файл передается отдельной multipart-частью с одинаковым именем files. При PUT непустой список заменяет все прежние файлы; отсутствие файлов сохраняет вложения."
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 200,
+            "description": "Отдельный текстовый заголовок. HTML удаляется, пробелы по краям обрезаются. null или пустая строка сбрасывает на «note_type · YYYY-MM-DD». В PUT отсутствие поля сохраняет заголовок."
+          },
+          "lifecycle": {
+            "type": "string",
+            "enum": [
+              "one_time",
+              "recurring"
+            ],
+            "default": "one_time",
+            "description": "В PUT отсутствие сохраняет прежний тип. Смена типа сбрасывает is_completed=false."
+          },
+          "recurrence_rule": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 50,
+            "enum": [
+              "FREQ=YEARLY",
+              "FREQ=MONTHLY",
+              "FREQ=WEEKLY",
+              null
+            ],
+            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null."
+          },
+          "title_audio": {
+            "type": "string",
+            "format": "binary",
+            "description": "Отдельный аудио-заголовок, не входит в files/file_count. m4a/aac/mp3/ogg, максимум 2 MiB и 30 секунд; содержимое проверяется, сохраняется как AAC/M4A. В PUT заменяет прежнее аудио; отсутствие сохраняет. Удаление — DELETE /auth/notes/{id}/title-audio."
           }
         }
       },
@@ -2369,7 +4052,13 @@
           "file_type",
           "createdAt",
           "userId",
-          "note_files"
+          "note_files",
+          "title",
+          "title_audio_url",
+          "lifecycle",
+          "recurrence_rule",
+          "is_completed",
+          "occurrences"
         ],
         "additionalProperties": false,
         "properties": {
@@ -2431,6 +4120,46 @@
               "format": "uri"
             },
             "description": "URL файлов в порядке загрузки. Файлы скачиваются отдельно только при открытии нужной заметки/дня. Без файлов возвращается []."
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Пользовательский или автоматически сформированный заголовок. Всегда непустая строка."
+          },
+          "title_audio_url": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true,
+            "description": "URL аудио-заголовка или null. Скачивание требует пользовательского Bearer JWT владельца."
+          },
+          "lifecycle": {
+            "type": "string",
+            "enum": [
+              "one_time",
+              "recurring"
+            ]
+          },
+          "recurrence_rule": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "FREQ=YEARLY",
+              "FREQ=MONTHLY",
+              "FREQ=WEEKLY",
+              null
+            ]
+          },
+          "is_completed": {
+            "type": "boolean",
+            "description": "Автозавершение one_time с note_date < текущего дня UTC. Проверка при запуске сервера и ежедневно в 00:05 UTC. История сохраняется."
+          },
+          "occurrences": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "date",
+              "description": "Виртуальная дата внутри запрошенного диапазона. Исходный note_date не изменяется."
+            }
           }
         },
         "example": {
@@ -2444,7 +4173,13 @@
           "userId": "550e8400-e29b-41d4-a716-446655440099",
           "note_files": [
             "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
-          ]
+          ],
+          "title": "Семейное фото",
+          "title_audio_url": null,
+          "lifecycle": "one_time",
+          "recurrence_rule": null,
+          "is_completed": false,
+          "occurrences": []
         }
       },
       "NotesListResponse": {
@@ -2476,7 +4211,13 @@
               "note_files": [
                 "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
               ],
-              "createdAt": "2026-10-17T09:00:00Z"
+              "createdAt": "2026-10-17T09:00:00Z",
+              "title": "Семейное фото",
+              "title_audio_url": null,
+              "lifecycle": "one_time",
+              "recurrence_rule": null,
+              "is_completed": false,
+              "occurrences": []
             }
           ],
           "total": 1
@@ -2491,7 +4232,12 @@
           "note_date_source",
           "file_count",
           "file_type",
-          "createdAt"
+          "createdAt",
+          "title",
+          "lifecycle",
+          "recurrence_rule",
+          "is_completed",
+          "occurrences"
         ],
         "additionalProperties": false,
         "properties": {
@@ -2540,9 +4286,43 @@
             "type": "string",
             "format": "date-time",
             "description": "Момент создания записи на сервере. Не используйте для привязки к дню календаря. При PUT не изменяется."
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Пользовательский или автоматически сформированный заголовок. Всегда непустая строка."
+          },
+          "lifecycle": {
+            "type": "string",
+            "enum": [
+              "one_time",
+              "recurring"
+            ]
+          },
+          "recurrence_rule": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "FREQ=YEARLY",
+              "FREQ=MONTHLY",
+              "FREQ=WEEKLY",
+              null
+            ]
+          },
+          "is_completed": {
+            "type": "boolean",
+            "description": "Автозавершение one_time с note_date < текущего дня UTC. Проверка при запуске сервера и ежедневно в 00:05 UTC. История сохраняется."
+          },
+          "occurrences": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "date",
+              "description": "Виртуальная дата внутри запрошенного диапазона. Исходный note_date не изменяется."
+            }
           }
         },
-        "description": "Метаданные для календаря. Поля userId и note_files отсутствуют.",
+        "description": "Метаданные календаря без userId, note_files и title_audio_url. Для recurring бейджи строятся по occurrences, для one_time по note_date; завершённые one_time не рисуйте в сетке.",
         "example": {
           "id": "550e8400-e29b-41d4-a716-446655440000",
           "note_type": "Заметка на 15.10.2036",
@@ -2550,7 +4330,12 @@
           "note_date_source": "selected",
           "file_count": 1,
           "file_type": "image",
-          "createdAt": "2026-10-17T09:00:00Z"
+          "createdAt": "2026-10-17T09:00:00Z",
+          "title": "Семейное фото",
+          "lifecycle": "one_time",
+          "recurrence_rule": null,
+          "is_completed": false,
+          "occurrences": []
         }
       },
       "LegacyNote": {
@@ -2560,7 +4345,13 @@
           "userId",
           "note_type",
           "note_files",
-          "createdAt"
+          "createdAt",
+          "title",
+          "title_audio_url",
+          "lifecycle",
+          "recurrence_rule",
+          "is_completed",
+          "occurrences"
         ],
         "additionalProperties": false,
         "properties": {
@@ -2590,9 +4381,49 @@
             "type": "string",
             "format": "date-time",
             "description": "Момент создания записи на сервере. Не используйте для привязки к дню календаря. При PUT не изменяется."
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Пользовательский или автоматически сформированный заголовок. Всегда непустая строка."
+          },
+          "title_audio_url": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true,
+            "description": "URL аудио-заголовка или null. Скачивание требует пользовательского Bearer JWT владельца."
+          },
+          "lifecycle": {
+            "type": "string",
+            "enum": [
+              "one_time",
+              "recurring"
+            ]
+          },
+          "recurrence_rule": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "FREQ=YEARLY",
+              "FREQ=MONTHLY",
+              "FREQ=WEEKLY",
+              null
+            ]
+          },
+          "is_completed": {
+            "type": "boolean",
+            "description": "Автозавершение one_time с note_date < текущего дня UTC. Проверка при запуске сервера и ежедневно в 00:05 UTC. История сохраняется."
+          },
+          "occurrences": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "date",
+              "description": "Виртуальная дата внутри запрошенного диапазона. Исходный note_date не изменяется."
+            }
           }
         },
-        "description": "Прежняя структура заметки для GET /auth/notes без параметров. Дату календаря этим ответом синхронизировать нельзя.",
+        "description": "Совместимый список без параметров: прежние поля сохранены, добавлены поля новых функций. Для календарных дат используйте диапазон или by-date. Без диапазона occurrences=[].",
         "example": {
           "id": "550e8400-e29b-41d4-a716-446655440000",
           "userId": "550e8400-e29b-41d4-a716-446655440099",
@@ -2600,7 +4431,13 @@
           "note_files": [
             "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
           ],
-          "createdAt": "2026-10-17T09:00:00Z"
+          "createdAt": "2026-10-17T09:00:00Z",
+          "title": "Семейное фото",
+          "title_audio_url": null,
+          "lifecycle": "one_time",
+          "recurrence_rule": null,
+          "is_completed": false,
+          "occurrences": []
         }
       },
       "NoteError": {
@@ -2649,7 +4486,13 @@
               "userId": "550e8400-e29b-41d4-a716-446655440099",
               "note_files": [
                 "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
-              ]
+              ],
+              "title": "Семейное фото",
+              "title_audio_url": null,
+              "lifecycle": "one_time",
+              "recurrence_rule": null,
+              "is_completed": false,
+              "occurrences": []
             }
           ],
           "total": 1
@@ -2704,7 +4547,13 @@
               "userId": "550e8400-e29b-41d4-a716-446655440099",
               "note_files": [
                 "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
-              ]
+              ],
+              "title": "Семейное фото",
+              "title_audio_url": null,
+              "lifecycle": "one_time",
+              "recurrence_rule": null,
+              "is_completed": false,
+              "occurrences": []
             }
           ],
           "total": 1,
@@ -2758,7 +4607,12 @@
               "note_date_source": "selected",
               "file_count": 1,
               "file_type": "image",
-              "createdAt": "2026-10-17T09:00:00Z"
+              "createdAt": "2026-10-17T09:00:00Z",
+              "title": "Семейное фото",
+              "lifecycle": "one_time",
+              "recurrence_rule": null,
+              "is_completed": false,
+              "occurrences": []
             }
           ],
           "total": 1,
@@ -2786,6 +4640,33 @@
             "example": "2036-10-15",
             "description": "Выбранный пользователем день календаря, YYYY-MM-DD (годы 0001..9999). Это дата без времени и часового пояса. Во Flutter форматируйте выбранный день напрямую; не преобразовывайте его через toUtc(). null трактуется как отсутствие поля.",
             "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 200,
+            "description": "Отдельный текстовый заголовок. HTML удаляется, пробелы по краям обрезаются. null или пустая строка сбрасывает на «note_type · YYYY-MM-DD». В PUT отсутствие поля сохраняет заголовок."
+          },
+          "lifecycle": {
+            "type": "string",
+            "enum": [
+              "one_time",
+              "recurring"
+            ],
+            "default": "one_time",
+            "description": "В PUT отсутствие сохраняет прежний тип. Смена типа сбрасывает is_completed=false."
+          },
+          "recurrence_rule": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 50,
+            "enum": [
+              "FREQ=YEARLY",
+              "FREQ=MONTHLY",
+              "FREQ=WEEKLY",
+              null
+            ],
+            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null."
           }
         }
       },
@@ -2813,6 +4694,33 @@
             "example": "2036-10-15",
             "description": "Выбранный пользователем день календаря, YYYY-MM-DD (годы 0001..9999). Это дата без времени и часового пояса. Во Flutter форматируйте выбранный день напрямую; не преобразовывайте его через toUtc(). null трактуется как отсутствие поля.",
             "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 200,
+            "description": "Отдельный текстовый заголовок. HTML удаляется, пробелы по краям обрезаются. null или пустая строка сбрасывает на «note_type · YYYY-MM-DD». В PUT отсутствие поля сохраняет заголовок."
+          },
+          "lifecycle": {
+            "type": "string",
+            "enum": [
+              "one_time",
+              "recurring"
+            ],
+            "default": "one_time",
+            "description": "В PUT отсутствие сохраняет прежний тип. Смена типа сбрасывает is_completed=false."
+          },
+          "recurrence_rule": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 50,
+            "enum": [
+              "FREQ=YEARLY",
+              "FREQ=MONTHLY",
+              "FREQ=WEEKLY",
+              null
+            ],
+            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null."
           }
         }
       },
@@ -2833,6 +4741,33 @@
             "example": "2036-10-15",
             "description": "Выбранный пользователем день календаря, YYYY-MM-DD (годы 0001..9999). Это дата без времени и часового пояса. Во Flutter форматируйте выбранный день напрямую; не преобразовывайте его через toUtc(). null трактуется как отсутствие поля.",
             "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 200,
+            "description": "Отдельный текстовый заголовок. HTML удаляется, пробелы по краям обрезаются. null или пустая строка сбрасывает на «note_type · YYYY-MM-DD». В PUT отсутствие поля сохраняет заголовок."
+          },
+          "lifecycle": {
+            "type": "string",
+            "enum": [
+              "one_time",
+              "recurring"
+            ],
+            "default": "one_time",
+            "description": "В PUT отсутствие сохраняет прежний тип. Смена типа сбрасывает is_completed=false."
+          },
+          "recurrence_rule": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 50,
+            "enum": [
+              "FREQ=YEARLY",
+              "FREQ=MONTHLY",
+              "FREQ=WEEKLY",
+              null
+            ],
+            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null."
           }
         }
       },
@@ -3169,6 +5104,674 @@
           "error": "email otp request is too frequent",
           "retry_after_seconds": 32
         }
+      },
+      "NoteShareRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "expires_in": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8760,
+            "default": 168,
+            "nullable": true,
+            "description": "Срок ссылки в часах."
+          }
+        },
+        "required": []
+      },
+      "NoteShareResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "share_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "share_token": {
+            "type": "string",
+            "minLength": 12,
+            "maxLength": 12
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "share_url",
+          "share_token",
+          "expires_at"
+        ]
+      },
+      "SharedNote": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Пользовательский или автоматически сформированный заголовок. Всегда непустая строка."
+          },
+          "note_type": {
+            "type": "string",
+            "minLength": 1,
+            "example": "Заметка на 15.10.2036"
+          },
+          "note_date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "example": "2036-10-15",
+            "description": "Выбранный пользователем день календаря, YYYY-MM-DD (годы 0001..9999). Это дата без времени и часового пояса. Во Flutter форматируйте выбранный день напрямую; не преобразовывайте его через toUtc()."
+          },
+          "note_files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uri",
+              "description": "Временный signed URL, не более 15 минут и не позже expires_at ссылки. Если истёк — повторите GET shared/{token}."
+            }
+          },
+          "title_audio_url": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true,
+            "description": "Временный signed URL аудио-заголовка или null; скачивание без JWT, срок не больше 15 минут."
+          },
+          "lifecycle": {
+            "type": "string",
+            "enum": [
+              "one_time",
+              "recurring"
+            ]
+          },
+          "recurrence_rule": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "FREQ=YEARLY",
+              "FREQ=MONTHLY",
+              "FREQ=WEEKLY",
+              null
+            ]
+          },
+          "is_completed": {
+            "type": "boolean",
+            "description": "Автозавершение one_time с note_date < текущего дня UTC. Проверка при запуске сервера и ежедневно в 00:05 UTC. История сохраняется."
+          },
+          "file_sizes": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0,
+              "description": "Размер файла в байтах; порядок соответствует note_files. 0 если файл недоступен."
+            }
+          },
+          "shared_by": {
+            "type": "string",
+            "description": "Маскированный телефон отправителя или общее имя; полный телефон и userId не раскрываются."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "note_type",
+          "note_date",
+          "note_files",
+          "title_audio_url",
+          "lifecycle",
+          "recurrence_rule",
+          "is_completed",
+          "file_sizes",
+          "shared_by",
+          "expires_at"
+        ]
+      },
+      "adminDeviceResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "phone_masked": {
+            "type": "string"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "app_version": {
+            "type": "string"
+          },
+          "os_version": {
+            "type": "string"
+          },
+          "device_model": {
+            "type": "string"
+          },
+          "manufacturer": {
+            "type": "string"
+          },
+          "has_push_token": {
+            "type": "boolean"
+          },
+          "first_seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "phone_masked",
+          "device_id",
+          "platform",
+          "has_push_token",
+          "first_seen_at",
+          "last_seen_at",
+          "is_active",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "UserLocationEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "latitude": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "longitude": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "accuracy_meters": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "source": {
+            "type": "string"
+          },
+          "ip_address": {
+            "type": "string"
+          },
+          "user_agent": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "event_type",
+          "created_at"
+        ]
+      },
+      "authEventResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "phone_masked": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "ip_address": {
+            "type": "string"
+          },
+          "user_agent": {
+            "type": "string"
+          },
+          "metadata_json": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "event_type",
+          "created_at"
+        ]
+      },
+      "AdsStats": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "total": {
+            "type": "integer"
+          },
+          "active": {
+            "type": "integer"
+          },
+          "inactive": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "active",
+          "inactive"
+        ]
+      },
+      "DeviceStats": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "total": {
+            "type": "integer"
+          },
+          "ios": {
+            "type": "integer"
+          },
+          "android": {
+            "type": "integer"
+          },
+          "active": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "ios",
+          "android",
+          "active"
+        ]
+      },
+      "LocationStats": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "total": {
+            "type": "integer"
+          },
+          "unique_users": {
+            "type": "integer"
+          },
+          "unique_devices": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "unique_users",
+          "unique_devices"
+        ]
+      },
+      "AnalyticsOverview": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ads": {
+            "$ref": "#/components/schemas/AdsStats"
+          },
+          "devices": {
+            "$ref": "#/components/schemas/DeviceStats"
+          },
+          "locations": {
+            "$ref": "#/components/schemas/LocationStats"
+          }
+        },
+        "required": [
+          "ads",
+          "devices",
+          "locations"
+        ]
+      },
+      "GeoPoint": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "phone_masked": {
+            "type": "string"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "device_model": {
+            "type": "string"
+          },
+          "latitude": {
+            "type": "number",
+            "format": "double"
+          },
+          "longitude": {
+            "type": "number",
+            "format": "double"
+          },
+          "accuracy_meters": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "source": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "latitude",
+          "longitude",
+          "created_at"
+        ]
+      },
+      "GeoCenter": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "latitude": {
+            "type": "number",
+            "format": "double"
+          },
+          "longitude": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "required": [
+          "latitude",
+          "longitude"
+        ]
+      },
+      "GeoRegion": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "approximate": {
+            "type": "boolean"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "unique_users": {
+            "type": "integer"
+          },
+          "percentage": {
+            "type": "number",
+            "format": "double"
+          },
+          "center": {
+            "$ref": "#/components/schemas/GeoCenter"
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "name",
+          "approximate",
+          "count",
+          "unique_users",
+          "percentage",
+          "center",
+          "last_seen_at"
+        ]
+      },
+      "GeoSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "total_events": {
+            "type": "integer"
+          },
+          "unique_users": {
+            "type": "integer"
+          },
+          "unique_devices": {
+            "type": "integer"
+          },
+          "ios_devices": {
+            "type": "integer"
+          },
+          "android_devices": {
+            "type": "integer"
+          },
+          "top_region": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "total_events",
+          "unique_users",
+          "unique_devices",
+          "ios_devices",
+          "android_devices",
+          "top_region"
+        ]
+      },
+      "GeoResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "summary": {
+            "$ref": "#/components/schemas/GeoSummary"
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GeoRegion"
+            }
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GeoPoint"
+            }
+          }
+        },
+        "required": [
+          "summary",
+          "regions",
+          "points"
+        ]
+      },
+      "AdminDevicesResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/adminDeviceResponse"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "data",
+          "total"
+        ]
+      },
+      "AdminLocationsResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserLocationEvent"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "data",
+          "total"
+        ]
+      },
+      "AdminAuthEventsResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/authEventResponse"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "data",
+          "total"
+        ]
+      },
+      "AuthDevice": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "device_id": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string",
+            "enum": [
+              "ios",
+              "android"
+            ]
+          },
+          "app_version": {
+            "type": "string"
+          },
+          "os_version": {
+            "type": "string"
+          },
+          "device_model": {
+            "type": "string"
+          },
+          "manufacturer": {
+            "type": "string"
+          },
+          "push_token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "platform"
+        ]
+      },
+      "AuthLocation": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "latitude": {
+            "type": "number",
+            "format": "double"
+          },
+          "longitude": {
+            "type": "number",
+            "format": "double"
+          },
+          "accuracy_meters": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "gps",
+              "network",
+              "manual",
+              "unknown"
+            ]
+          }
+        },
+        "required": [
+          "latitude",
+          "longitude"
+        ]
       }
     }
   }

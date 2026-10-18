@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time-leak/config"
 	"time-leak/internal/domain"
 	"time-leak/internal/service"
@@ -24,6 +25,7 @@ type Handler struct {
 	analytics service.IAnalyticsService
 	cfg       *config.Config
 	log       *zap.Logger
+	noteLocks [64]sync.Mutex
 }
 
 func New(services *service.Services, cfg *config.Config, log *zap.Logger) *Handler {
@@ -65,6 +67,12 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/auth/notes/{id}", h.AuthGetNote)
 	mux.HandleFunc("PUT /api/v1/auth/notes/{id}", h.AuthUpdateNote)
 	mux.HandleFunc("DELETE /api/v1/auth/notes/{id}", h.AuthDeleteNote)
+	mux.HandleFunc("DELETE /api/v1/auth/notes/{id}/title-audio", h.AuthDeleteTitleAudio)
+	mux.HandleFunc("POST /api/v1/auth/notes/{id}/share", h.AuthShareNote)
+	mux.HandleFunc("GET /api/v1/notes/shared/{token}", h.SharedNote)
+	mux.HandleFunc("GET /api/v1/notes/shared/{token}/files/{asset}", h.SharedNoteFile)
+	mux.HandleFunc("GET /api/v1/notes/shared/{token}/preview", h.SharedNotePreview)
+	mux.HandleFunc("GET /s/{token}", h.SharedNotePage)
 	mux.HandleFunc("GET /api/v1/note-files/{path...}", h.NoteFile)
 
 	mux.HandleFunc("GET /api/v1/me", h.Me)
@@ -99,11 +107,13 @@ type authRefreshReq struct {
 }
 
 type authCreateNoteReq struct {
+	domain.NoteMutation
 	NoteType string  `json:"note_type"`
 	NoteDate *string `json:"note_date"`
 }
 
 type createNoteReq struct {
+	domain.NoteMutation
 	UserID   string  `json:"userId"`
 	NoteType string  `json:"note_type"`
 	NoteDate *string `json:"note_date"`
@@ -507,20 +517,7 @@ func (h *Handler) AuthCreateNote(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cleanupMultipartForm(r)
 
-	savedNoteFiles, err := h.saveUploadedNoteFiles(payload.Files)
-	if err != nil {
-		h.writeNoteRequestError(w, err)
-		return
-	}
-
-	note, err := h.app.CreateNote(r.Context(), claims.UserUUID, payload.NoteType, savedNoteFiles, payload.NoteDate)
-	if err != nil {
-		h.deleteStoredNoteFiles(savedNoteFiles)
-		h.writeNoteRequestError(w, err)
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, h.noteResponse(r, note))
+	h.createNoteWithPayload(w, r, claims.UserUUID, payload)
 }
 
 func (h *Handler) AuthListNotes(w http.ResponseWriter, r *http.Request) {
@@ -603,20 +600,7 @@ func (h *Handler) CreateNote(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cleanupMultipartForm(r)
 
-	savedNoteFiles, err := h.saveUploadedNoteFiles(payload.Files)
-	if err != nil {
-		h.writeNoteRequestError(w, err)
-		return
-	}
-
-	note, err := h.app.CreateNote(r.Context(), payload.UserID, payload.NoteType, savedNoteFiles, payload.NoteDate)
-	if err != nil {
-		h.deleteStoredNoteFiles(savedNoteFiles)
-		h.writeNoteRequestError(w, err)
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, h.noteResponse(r, note))
+	h.createNoteWithPayload(w, r, payload.UserID, payload)
 }
 
 func (h *Handler) AdsNext(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"mime"
@@ -28,6 +29,8 @@ const (
 var errTooManyMultipartNoteFiles = errors.New("too many note files")
 
 type noteMutationPayload struct {
+	Changes          domain.NoteMutation
+	TitleAudio       *multipart.FileHeader
 	NoteType         string
 	NoteTypeProvided bool
 	NoteDate         *string
@@ -36,6 +39,7 @@ type noteMutationPayload struct {
 }
 
 type updateNoteReq struct {
+	domain.NoteMutation
 	NoteType *string `json:"note_type"`
 	NoteDate *string `json:"note_date"`
 }
@@ -43,8 +47,13 @@ type updateNoteReq struct {
 var errInvalidNotePayload = errors.New("invalid note payload")
 
 func decodeNoteJSONBody(r *http.Request, out any) error {
-	if err := decodeJSONBody(r, out); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(out); err != nil {
 		return errors.Join(errInvalidNotePayload, err)
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return errInvalidNotePayload
 	}
 	return nil
 }
@@ -60,6 +69,7 @@ func parseAuthCreateNotePayload(r *http.Request) (noteMutationPayload, error) {
 	}
 
 	return noteMutationPayload{
+		Changes:          req.NoteMutation,
 		NoteType:         strings.TrimSpace(req.NoteType),
 		NoteTypeProvided: true,
 		NoteDate:         req.NoteDate,
@@ -77,6 +87,7 @@ func parseLegacyCreateNotePayload(r *http.Request) (noteMutationPayload, error) 
 	}
 
 	return noteMutationPayload{
+		Changes:          req.NoteMutation,
 		UserID:           strings.TrimSpace(req.UserID),
 		NoteType:         strings.TrimSpace(req.NoteType),
 		NoteTypeProvided: true,
@@ -94,7 +105,7 @@ func parseNoteUpdatePayload(r *http.Request) (noteMutationPayload, error) {
 		return noteMutationPayload{}, err
 	}
 
-	payload := noteMutationPayload{NoteDate: req.NoteDate}
+	payload := noteMutationPayload{NoteDate: req.NoteDate, Changes: req.NoteMutation}
 	if req.NoteType != nil {
 		payload.NoteTypeProvided = true
 		payload.NoteType = strings.TrimSpace(*req.NoteType)
@@ -111,6 +122,24 @@ func parseMultipartNotePayload(r *http.Request, requireUserID bool) (noteMutatio
 
 	payload := noteMutationPayload{
 		Files: r.MultipartForm.File[noteFilesFormField],
+	}
+	if files := r.MultipartForm.File["title_audio"]; len(files) > 1 {
+		cleanupMultipartForm(r)
+		return noteMutationPayload{}, errInvalidNotePayload
+	} else if len(files) == 1 {
+		payload.TitleAudio = files[0]
+	}
+	for key, field := range map[string]*domain.OptionalString{"title": &payload.Changes.Title, "lifecycle": &payload.Changes.Lifecycle, "recurrence_rule": &payload.Changes.RecurrenceRule} {
+		if values, ok := r.MultipartForm.Value[key]; ok {
+			if len(values) != 1 {
+				cleanupMultipartForm(r)
+				return noteMutationPayload{}, errInvalidNotePayload
+			}
+			*field = domain.StringChange(values[0])
+			if key != "lifecycle" && values[0] == "" {
+				field.Value = nil
+			}
+		}
 	}
 	if len(payload.Files) > maxNoteFiles {
 		cleanupMultipartForm(r)
@@ -258,6 +287,10 @@ func (h *Handler) deleteStoredNoteFiles(noteFiles []string) {
 }
 
 func (h *Handler) noteResponse(r *http.Request, note domain.Note) domain.Note {
+	if note.TitleAudioURL != nil {
+		value := h.noteFileURL(r, *note.TitleAudioURL)
+		note.TitleAudioURL = &value
+	}
 	if len(note.NoteFiles) == 0 {
 		note.NoteFiles = []string{}
 		return note
@@ -277,6 +310,10 @@ func (h *Handler) noteResponse(r *http.Request, note domain.Note) domain.Note {
 
 	note.NoteFiles = files
 	return note
+}
+
+func (h *Handler) noteFileURL(r *http.Request, file string) string {
+	return requestBaseURL(r) + path.Join(noteFilesURLPrefix, strings.TrimPrefix(path.Clean("/"+filepath.ToSlash(file)), "/"))
 }
 
 func (h *Handler) noteListResponse(r *http.Request, notes []domain.Note) []domain.Note {

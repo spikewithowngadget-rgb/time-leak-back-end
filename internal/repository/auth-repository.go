@@ -272,7 +272,7 @@ func (r *Repository) SeedUserIfNotExists(ctx context.Context, email, phone, pass
 	return execErr
 }
 
-func (r *Repository) CreateNote(ctx context.Context, userID, noteType string, noteFiles []string, noteDate *string) (domain.Note, error) {
+func (r *Repository) CreateNote(ctx context.Context, userID, noteType string, noteFiles []string, noteDate *string, options ...domain.NoteMutation) (domain.Note, error) {
 	noteType = strings.TrimSpace(noteType)
 	if userID == "" {
 		return domain.Note{}, errors.New("userId is empty")
@@ -289,6 +289,17 @@ func (r *Repository) CreateNote(ctx context.Context, userID, noteType string, no
 	}
 
 	noteID := dbtraits.GenerateUUID()
+	changes := domain.NoteMutation{}
+	if len(options) > 0 {
+		changes = options[0]
+	}
+	if changes.ID != "" {
+		noteID = changes.ID
+	}
+	changes, err = domain.ResolveNoteMutation(domain.Note{}, changes)
+	if err != nil {
+		return domain.Note{}, err
+	}
 	fileCount, fileType := domain.NoteFileMetadata(noteFiles)
 	dateSource := domain.NoteDateCreatedAt
 	if noteDate != nil {
@@ -296,8 +307,8 @@ func (r *Repository) CreateNote(ctx context.Context, userID, noteType string, no
 	}
 	_, err = r.db.ExecContext(
 		ctx,
-		`INSERT INTO notes (id, user_id, note_type, note_files, note_date, note_date_source, file_count, file_type)
-		 VALUES (?, ?, ?, ?, COALESCE(?, strftime('%Y-%m-%d', 'now')), ?, ?, ?)`,
+		`INSERT INTO notes (id, user_id, note_type, note_files, note_date, note_date_source, file_count, file_type, title, title_audio_url, lifecycle, recurrence_rule)
+		 VALUES (?, ?, ?, ?, COALESCE(?, strftime('%Y-%m-%d', 'now')), ?, ?, ?, ?, ?, ?, ?)`,
 		noteID,
 		userID,
 		noteType,
@@ -306,6 +317,7 @@ func (r *Repository) CreateNote(ctx context.Context, userID, noteType string, no
 		dateSource,
 		fileCount,
 		fileType,
+		changes.Title.Value, changes.TitleAudioURL.Value, changes.Lifecycle.Value, changes.RecurrenceRule.Value,
 	)
 	if err != nil {
 		return domain.Note{}, err
@@ -322,7 +334,7 @@ func (r *Repository) GetNoteByIDForUser(ctx context.Context, noteID, userID stri
 	return r.getNote(ctx, noteID, userID)
 }
 
-func (r *Repository) UpdateNote(ctx context.Context, noteID, userID, noteType string, noteFiles []string, noteDate *string) (domain.Note, error) {
+func (r *Repository) UpdateNote(ctx context.Context, noteID, userID, noteType string, noteFiles []string, noteDate *string, options ...domain.NoteMutation) (domain.Note, error) {
 	noteType = strings.TrimSpace(noteType)
 	if noteType == "" {
 		return domain.Note{}, errors.New("note_type is empty")
@@ -340,11 +352,30 @@ func (r *Repository) UpdateNote(ctx context.Context, noteID, userID, noteType st
 	}
 
 	fileCount, fileType := domain.NoteFileMetadata(noteFiles)
+	changes := domain.NoteMutation{}
+	if len(options) > 0 {
+		changes = options[0]
+	}
+	if len(options) > 0 {
+		existing, err := r.GetNoteByIDForUser(ctx, noteID, userID)
+		if err != nil {
+			return domain.Note{}, err
+		}
+		changes, err = domain.ResolveNoteMutation(existing, changes)
+		if err != nil {
+			return domain.Note{}, err
+		}
+	}
 	res, err := r.db.ExecContext(
 		ctx,
 		`UPDATE notes SET note_type = ?, note_files = ?, file_count = ?, file_type = ?,
 		 note_date = COALESCE(?, note_date),
-		 note_date_source = CASE WHEN ? IS NULL THEN note_date_source ELSE 'selected' END
+		 note_date_source = CASE WHEN ? IS NULL THEN note_date_source ELSE 'selected' END,
+		 title = CASE WHEN ? THEN ? ELSE title END,
+		 title_audio_url = CASE WHEN ? THEN ? ELSE title_audio_url END,
+		 is_completed = CASE WHEN ? AND lifecycle <> ? THEN 0 WHEN ? IS NOT NULL THEN 0 ELSE is_completed END,
+		 lifecycle = CASE WHEN ? THEN ? ELSE lifecycle END,
+		 recurrence_rule = CASE WHEN ? THEN ? ELSE recurrence_rule END
 		 WHERE id = ? AND user_id = ?`,
 		noteType,
 		noteFilesJSON,
@@ -352,6 +383,11 @@ func (r *Repository) UpdateNote(ctx context.Context, noteID, userID, noteType st
 		fileType,
 		noteDate,
 		noteDate,
+		changes.Title.Set, changes.Title.Value,
+		changes.TitleAudioURL.Set, changes.TitleAudioURL.Value,
+		changes.Lifecycle.Set, changes.Lifecycle.Value, noteDate,
+		changes.Lifecycle.Set, changes.Lifecycle.Value,
+		changes.RecurrenceRule.Set, changes.RecurrenceRule.Value,
 		noteID,
 		userID,
 	)

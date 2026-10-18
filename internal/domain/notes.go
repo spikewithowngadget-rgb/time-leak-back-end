@@ -21,6 +21,11 @@ type NoteMetadata struct {
 	FileCount      int       `json:"file_count"`
 	FileType       string    `json:"file_type"`
 	CreatedAt      time.Time `json:"createdAt"`
+	Title          string    `json:"title"`
+	Lifecycle      string    `json:"lifecycle"`
+	RecurrenceRule *string   `json:"recurrence_rule"`
+	IsCompleted    bool      `json:"is_completed"`
+	Occurrences    []string  `json:"occurrences"`
 }
 
 type NoteListFilter struct {
@@ -36,6 +41,8 @@ func (n Note) Metadata() NoteMetadata {
 		ID: n.ID, NoteType: n.NoteType, NoteDate: n.NoteDate,
 		NoteDateSource: n.NoteDateSource, FileCount: n.FileCount,
 		FileType: n.FileType, CreatedAt: n.CreatedAt,
+		Title: n.Title, Lifecycle: n.Lifecycle, RecurrenceRule: n.RecurrenceRule,
+		IsCompleted: n.IsCompleted, Occurrences: n.Occurrences,
 	}
 }
 

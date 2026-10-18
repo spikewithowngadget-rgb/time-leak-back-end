@@ -120,7 +120,7 @@ func TestNotesAPI_LegacyPaginationAndMetadata(t *testing.T) {
 	}
 	for _, item := range items {
 		note := item.(map[string]any)
-		if len(note) != 5 || note["note_files"] == nil || note["createdAt"] == nil {
+		if len(note) != 11 || note["note_files"] == nil || note["createdAt"] == nil || note["title"] == nil || note["lifecycle"] != "one_time" {
 			t.Fatalf("legacy note shape changed: %v", note)
 		}
 	}

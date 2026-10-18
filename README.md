@@ -7,6 +7,8 @@ Go backend with SQLite, JWT auth, phone-only WhatsApp OTP auth through WHAPI, no
 - API versioning under `/api/v1`
 - Existing user/profile/notes endpoints preserved
 - Notes support multipart uploads with up to `5` files per note
+- Notes have independent text/audio titles, one-time completion and yearly/monthly/weekly recurrence
+- Expiring note shares include public JSON, Open Graph previews and signed file downloads
 - Uploaded note files are stored under `./note_files/{audio|photo|video|document}`
 - Access token TTL is exactly `60s`
 - Refresh token rotation with revocation
@@ -35,12 +37,20 @@ Go backend with SQLite, JWT auth, phone-only WhatsApp OTP auth through WHAPI, no
 make run
 ```
 
+Audio titles require `ffmpeg` and `ffprobe` on the server PATH (Ubuntu/Debian:
+`sudo apt-get install ffmpeg`; macOS: `brew install ffmpeg`). Ordinary notes and
+existing uploads continue to work without them; audio-title uploads return 503
+if the tools are unavailable. Executable paths can be configured below.
+
 Environment overrides:
 
 - `APP_ADDR` (default `:8081`)
 - `DB_PATH` (default `data`)
 - `DB_NAME` (default `timeleak.db`)
 - `NOTE_FILES_PATH` (default `./note_files`)
+- `PUBLIC_BASE_URL` (default `https://timeleak.kz`; public share pages and signed file URLs; reverse proxy this domain to the backend)
+- `SHARE_SIGNING_SECRET` (optional separate HMAC secret; falls back to `JWT_ACCESS_SECRET`)
+- `NOTE_FFMPEG_PATH` / `NOTE_FFPROBE_PATH` (default `ffmpeg` / `ffprobe`)
 - `JWT_ACCESS_SECRET`
 - `JWT_ADMIN_SECRET`
 - `JWT_REFRESH_TTL_HOURS`
@@ -81,6 +91,7 @@ Migrations are embedded and applied automatically at startup from:
 - `0016`–`0019`: note calendar date, date source, file count and file type
 - `0020_notes_metadata_backfill.sql`: transactional Go backfill and the calendar query index
 - `0021_email_otp_send_attempts.sql`: persistent email send cooldown and daily quota
+- `0022_note_features.sql`: nullable titles, separate audio title, lifecycle, recurrence, completion and cascading share tokens
 
 No manual migrate command is required.
 
@@ -104,6 +115,16 @@ the binary and served unchanged at `/swagger.json`. Edit that JSON to update
 the contract. The **Notes** tag contains the Flutter workflow, named response
 models, request/response examples, Bearer authentication and error responses.
 Import `/swagger.json` into API/client-generation tools after deployment.
+
+The short Flutter handoff for titles, recurrence, audio and sharing is
+[`docs/FLUTTER_FEATURES_HANDOFF_RU.md`](docs/FLUTTER_FEATURES_HANDOFF_RU.md).
+The existing complete API guide remains at
+[`docs/FLUTTER_API_GUIDE_RU.md`](docs/FLUTTER_API_GUIDE_RU.md).
+
+One-time notes are marked complete at startup and daily at 00:05 UTC when
+`note_date` is before the current UTC day. They remain available for history.
+Recurring notes are never completed automatically. List and day queries return
+virtual `occurrences` while keeping the original note ID, date and attachments.
 
 ## OTP: email и WhatsApp
 

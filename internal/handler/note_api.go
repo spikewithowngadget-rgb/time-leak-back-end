@@ -5,8 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"time-leak/internal/domain"
 	"time-leak/internal/service"
 )
 
@@ -52,6 +54,24 @@ func (h *Handler) NoteFile(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "bad request")
 		return
 	}
+	cleanPath := filepath.ToSlash(filepath.Clean(filePath))
+	if strings.HasPrefix(cleanPath, "note-title-audio/") {
+		claims, ok := h.userClaimsFromRequest(w, r)
+		if !ok {
+			return
+		}
+		id := strings.TrimSuffix(strings.TrimPrefix(cleanPath, "note-title-audio/"), ".m4a")
+		note, err := h.app.GetNote(r.Context(), id, claims.UserUUID)
+		if err != nil {
+			h.writeNoteRequestError(w, err)
+			return
+		}
+		if note.TitleAudioURL == nil || *note.TitleAudioURL != cleanPath {
+			writeErrorJSON(w, http.StatusNotFound, "not found")
+			return
+		}
+		w.Header().Set("Cache-Control", "private, no-store")
+	}
 
 	info, err := os.Stat(absPath)
 	if err != nil || info.IsDir() {
@@ -63,6 +83,8 @@ func (h *Handler) NoteFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) updateNote(w http.ResponseWriter, r *http.Request, noteID, userID string) {
+	unlock := h.lockNote(noteID)
+	defer unlock()
 	existing, err := h.app.GetNote(r.Context(), noteID, userID)
 	if err != nil {
 		h.writeNoteRequestError(w, err)
@@ -75,6 +97,11 @@ func (h *Handler) updateNote(w http.ResponseWriter, r *http.Request, noteID, use
 		return
 	}
 	defer cleanupMultipartForm(r)
+	payload.Changes, err = domain.ResolveNoteMutation(existing, payload.Changes)
+	if err != nil {
+		h.writeNoteRequestError(w, err)
+		return
+	}
 
 	noteType := existing.NoteType
 	if payload.NoteTypeProvided {
@@ -91,7 +118,7 @@ func (h *Handler) updateNote(w http.ResponseWriter, r *http.Request, noteID, use
 		}
 	}
 
-	updated, err := h.app.UpdateNote(r.Context(), noteID, userID, noteType, noteFiles, payload.NoteDate)
+	audioPath, finishAudio, err := h.saveTitleAudio(r.Context(), payload.TitleAudio, noteID)
 	if err != nil {
 		if replaceFiles {
 			h.deleteStoredNoteFiles(noteFiles)
@@ -99,6 +126,20 @@ func (h *Handler) updateNote(w http.ResponseWriter, r *http.Request, noteID, use
 		h.writeNoteRequestError(w, err)
 		return
 	}
+	committed := false
+	defer func() { finishAudio(committed) }()
+	if payload.TitleAudio != nil {
+		payload.Changes.TitleAudioURL = domain.StringChange(audioPath)
+	}
+	updated, err := h.app.UpdateNote(r.Context(), noteID, userID, noteType, noteFiles, payload.NoteDate, payload.Changes)
+	if err != nil {
+		if replaceFiles {
+			h.deleteStoredNoteFiles(noteFiles)
+		}
+		h.writeNoteRequestError(w, err)
+		return
+	}
+	committed = true
 
 	if replaceFiles {
 		h.deleteStoredNoteFiles(existing.NoteFiles)
@@ -108,6 +149,8 @@ func (h *Handler) updateNote(w http.ResponseWriter, r *http.Request, noteID, use
 }
 
 func (h *Handler) deleteNote(w http.ResponseWriter, r *http.Request, noteID, userID string) {
+	unlock := h.lockNote(noteID)
+	defer unlock()
 	note, err := h.app.GetNote(r.Context(), noteID, userID)
 	if err != nil {
 		h.writeNoteRequestError(w, err)
@@ -120,6 +163,9 @@ func (h *Handler) deleteNote(w http.ResponseWriter, r *http.Request, noteID, use
 	}
 
 	h.deleteStoredNoteFiles(note.NoteFiles)
+	if note.TitleAudioURL != nil {
+		h.deleteStoredNoteFiles([]string{*note.TitleAudioURL})
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -129,7 +175,12 @@ func (h *Handler) writeNoteRequestError(w http.ResponseWriter, err error) {
 		return
 	case errors.Is(err, sql.ErrNoRows):
 		writeErrorJSON(w, http.StatusNotFound, "not found")
-	case errors.Is(err, service.ErrInvalidNoteDate), errors.Is(err, service.ErrInvalidNoteFilter):
+	case errors.Is(err, errAudioProcessingUnavailable):
+		writeErrorJSON(w, http.StatusServiceUnavailable, "audio processing unavailable")
+	case errors.Is(err, errTitleAudioTooLarge):
+		writeErrorJSON(w, http.StatusRequestEntityTooLarge, err.Error())
+	case errors.Is(err, errInvalidTitleAudio), errors.Is(err, domain.ErrInvalidNoteFeatures),
+		errors.Is(err, service.ErrInvalidNoteDate), errors.Is(err, service.ErrInvalidNoteFilter), errors.Is(err, service.ErrInvalidShareExpiry):
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, service.ErrNoteTypeRequired),
 		errors.Is(err, service.ErrTooManyNoteFiles),

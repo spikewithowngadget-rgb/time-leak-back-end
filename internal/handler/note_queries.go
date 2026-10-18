@@ -109,18 +109,25 @@ func (h *Handler) AuthGetNote(w http.ResponseWriter, r *http.Request) {
 
 // Keep the exact original list shape for clients that have not migrated yet.
 type legacyNoteResponse struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"userId"`
-	NoteType  string    `json:"note_type"`
-	NoteFiles []string  `json:"note_files"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID             string    `json:"id"`
+	UserID         string    `json:"userId"`
+	NoteType       string    `json:"note_type"`
+	NoteFiles      []string  `json:"note_files"`
+	CreatedAt      time.Time `json:"createdAt"`
+	Title          string    `json:"title"`
+	TitleAudioURL  *string   `json:"title_audio_url"`
+	Lifecycle      string    `json:"lifecycle"`
+	RecurrenceRule *string   `json:"recurrence_rule"`
+	IsCompleted    bool      `json:"is_completed"`
+	Occurrences    []string  `json:"occurrences"`
 }
 
 func (h *Handler) legacyNoteListResponse(r *http.Request, notes []domain.Note) []legacyNoteResponse {
 	out := make([]legacyNoteResponse, 0, len(notes))
 	for _, note := range notes {
 		note = h.noteResponse(r, note)
-		out = append(out, legacyNoteResponse{note.ID, note.UserID, note.NoteType, note.NoteFiles, note.CreatedAt})
+		out = append(out, legacyNoteResponse{note.ID, note.UserID, note.NoteType, note.NoteFiles, note.CreatedAt,
+			note.Title, note.TitleAudioURL, note.Lifecycle, note.RecurrenceRule, note.IsCompleted, note.Occurrences})
 	}
 	return out
 }

@@ -13,9 +13,11 @@ type IUserNotesService interface {
 	GetUser(ctx context.Context, userID string) (domain.User, error)
 	GetUserByPhone(ctx context.Context, phone string) (domain.User, error)
 	UpdateUserLanguage(ctx context.Context, userID, userLanguage string) error
-	CreateNote(ctx context.Context, userID, noteType string, noteFiles []string, noteDate *string) (domain.Note, error)
+	CreateNote(ctx context.Context, userID, noteType string, noteFiles []string, noteDate *string, options ...domain.NoteMutation) (domain.Note, error)
 	GetNote(ctx context.Context, noteID, userID string) (domain.Note, error)
-	UpdateNote(ctx context.Context, noteID, userID, noteType string, noteFiles []string, noteDate *string) (domain.Note, error)
+	UpdateNote(ctx context.Context, noteID, userID, noteType string, noteFiles []string, noteDate *string, options ...domain.NoteMutation) (domain.Note, error)
+	CreateNoteShare(ctx context.Context, noteID, userID string, hours int) (domain.NoteShare, error)
+	GetSharedNote(ctx context.Context, token string, countView bool) (domain.Note, domain.NoteShare, error)
 	DeleteNote(ctx context.Context, noteID, userID string) error
 	ListNotes(ctx context.Context, userID string) ([]domain.Note, error)
 	ListNotesInRange(ctx context.Context, userID string, filter domain.NoteListFilter) ([]domain.Note, int, error)
@@ -120,7 +122,7 @@ type Services struct {
 }
 
 func NewServices(
-	_ context.Context,
+	ctx context.Context,
 	appConfig *config.Config,
 	repositories *repository.Repositories,
 	log *zap.Logger,
@@ -135,6 +137,7 @@ func NewServices(
 	}
 
 	appService := NewAppService(repositories.Auth, appConfig.OTP.ExpiresIn, log)
+	go appService.RunNoteCompletion(ctx)
 	jwtService := NewAuthService(appConfig.JWT, repositories.Auth, log)
 	otpService := NewOTPService(repositories.Auth, otpCfg, log, NewWhapiSender(appConfig.Whapi, appConfig.OTP.ExpiresIn, log))
 	emailOTPService := NewEmailOTPService(repositories.Auth, otpCfg, appConfig.EmailOTP, log, NewResendSender(appConfig.Resend, appConfig.OTP.ExpiresIn, log))

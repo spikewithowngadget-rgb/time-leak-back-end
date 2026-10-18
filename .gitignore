@@ -1,2 +1,5 @@
 
 /.env
+*.db-shm
+*.db-wal
+/note_files/note-title-audio/

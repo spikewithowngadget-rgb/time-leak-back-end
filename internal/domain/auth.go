@@ -42,6 +42,12 @@ type Note struct {
 	FileCount      int       `json:"file_count"`
 	FileType       string    `json:"file_type"`
 	CreatedAt      time.Time `json:"createdAt"`
+	Title          string    `json:"title"`
+	TitleAudioURL  *string   `json:"title_audio_url"`
+	Lifecycle      string    `json:"lifecycle"`
+	RecurrenceRule *string   `json:"recurrence_rule"`
+	IsCompleted    bool      `json:"is_completed"`
+	Occurrences    []string  `json:"occurrences"`
 }
 
 type OTPChannel string
