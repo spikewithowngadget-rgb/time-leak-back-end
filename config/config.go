@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"time-leak/internal/domain"
 )
 
 type JWTConfig struct {
@@ -41,6 +42,19 @@ type WhapiConfig struct {
 	Timeout time.Duration
 }
 
+type ResendConfig struct {
+	APIKey    string
+	FromEmail string
+	FromName  string
+	BaseURL   string
+	Timeout   time.Duration
+}
+
+type EmailOTPConfig struct {
+	RequestCooldown   time.Duration
+	MaxRequestsPerDay int
+}
+
 type Config struct {
 	Addr                   string
 	DBPath                 string
@@ -54,6 +68,8 @@ type Config struct {
 	JWT                    JWTConfig
 	OTP                    OTPConfig
 	Whapi                  WhapiConfig
+	Resend                 ResendConfig
+	EmailOTP               EmailOTPConfig
 	Admin                  AdminConfig
 }
 
@@ -98,6 +114,13 @@ func NewConfig() (*Config, error) {
 			Token:   "",
 			Timeout: 10 * time.Second,
 		},
+		Resend: ResendConfig{
+			FromEmail: "noreply@timeleak.kz",
+			FromName:  "Time Leak",
+			BaseURL:   "https://api.resend.com",
+			Timeout:   10 * time.Second,
+		},
+		EmailOTP:               EmailOTPConfig{RequestCooldown: 32 * time.Second, MaxRequestsPerDay: 10},
 		AppEnv:                 "development",
 		EnableTestingEndpoints: false,
 	}
@@ -227,6 +250,33 @@ func NewConfig() (*Config, error) {
 			return nil, errors.New("WHAPI_TIMEOUT must be duration")
 		}
 		cfg.Whapi.Timeout = d
+	}
+	cfg.Resend.APIKey = strings.TrimSpace(os.Getenv("RESEND_API_KEY"))
+	if v := os.Getenv("RESEND_FROM_EMAIL"); v != "" {
+		cfg.Resend.FromEmail = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("RESEND_FROM_NAME"); v != "" {
+		cfg.Resend.FromName = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("OTP_RESEND_COOLDOWN"); v != "" {
+		d, err := time.ParseDuration(strings.TrimSpace(v))
+		if err != nil || d <= 0 {
+			return nil, errors.New("OTP_RESEND_COOLDOWN must be a positive duration, e.g. 32s")
+		}
+		cfg.EmailOTP.RequestCooldown = d
+	}
+	if v := os.Getenv("RATE_OTP_REQUEST_PER_DAY"); v != "" {
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n <= 0 {
+			return nil, errors.New("RATE_OTP_REQUEST_PER_DAY must be a positive integer")
+		}
+		cfg.EmailOTP.MaxRequestsPerDay = n
+	}
+	if _, valid := domain.NormalizeEmailAddress(cfg.Resend.FromEmail); !valid {
+		return nil, errors.New("RESEND_FROM_EMAIL must be a plain valid email address")
+	}
+	if strings.ContainsAny(cfg.Resend.FromName, "\r\n") {
+		return nil, errors.New("RESEND_FROM_NAME must not contain line breaks")
 	}
 
 	if cfg.DBPath == "" {

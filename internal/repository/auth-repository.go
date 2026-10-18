@@ -272,7 +272,7 @@ func (r *Repository) SeedUserIfNotExists(ctx context.Context, email, phone, pass
 	return execErr
 }
 
-func (r *Repository) CreateNote(ctx context.Context, userID, noteType string, noteFiles []string) (domain.Note, error) {
+func (r *Repository) CreateNote(ctx context.Context, userID, noteType string, noteFiles []string, noteDate *string) (domain.Note, error) {
 	noteType = strings.TrimSpace(noteType)
 	if userID == "" {
 		return domain.Note{}, errors.New("userId is empty")
@@ -289,13 +289,23 @@ func (r *Repository) CreateNote(ctx context.Context, userID, noteType string, no
 	}
 
 	noteID := dbtraits.GenerateUUID()
+	fileCount, fileType := domain.NoteFileMetadata(noteFiles)
+	dateSource := domain.NoteDateCreatedAt
+	if noteDate != nil {
+		dateSource = domain.NoteDateSelected
+	}
 	_, err = r.db.ExecContext(
 		ctx,
-		`INSERT INTO notes (id, user_id, note_type, note_files) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO notes (id, user_id, note_type, note_files, note_date, note_date_source, file_count, file_type)
+		 VALUES (?, ?, ?, ?, COALESCE(?, strftime('%Y-%m-%d', 'now')), ?, ?, ?)`,
 		noteID,
 		userID,
 		noteType,
 		noteFilesJSON,
+		noteDate,
+		dateSource,
+		fileCount,
+		fileType,
 	)
 	if err != nil {
 		return domain.Note{}, err
@@ -312,7 +322,7 @@ func (r *Repository) GetNoteByIDForUser(ctx context.Context, noteID, userID stri
 	return r.getNote(ctx, noteID, userID)
 }
 
-func (r *Repository) UpdateNote(ctx context.Context, noteID, userID, noteType string, noteFiles []string) (domain.Note, error) {
+func (r *Repository) UpdateNote(ctx context.Context, noteID, userID, noteType string, noteFiles []string, noteDate *string) (domain.Note, error) {
 	noteType = strings.TrimSpace(noteType)
 	if noteType == "" {
 		return domain.Note{}, errors.New("note_type is empty")
@@ -329,11 +339,19 @@ func (r *Repository) UpdateNote(ctx context.Context, noteID, userID, noteType st
 		return domain.Note{}, err
 	}
 
+	fileCount, fileType := domain.NoteFileMetadata(noteFiles)
 	res, err := r.db.ExecContext(
 		ctx,
-		`UPDATE notes SET note_type = ?, note_files = ? WHERE id = ? AND user_id = ?`,
+		`UPDATE notes SET note_type = ?, note_files = ?, file_count = ?, file_type = ?,
+		 note_date = COALESCE(?, note_date),
+		 note_date_source = CASE WHEN ? IS NULL THEN note_date_source ELSE 'selected' END
+		 WHERE id = ? AND user_id = ?`,
 		noteType,
 		noteFilesJSON,
+		fileCount,
+		fileType,
+		noteDate,
+		noteDate,
 		noteID,
 		userID,
 	)
@@ -375,7 +393,7 @@ func (r *Repository) ListNotesByUserID(ctx context.Context, userID string) ([]do
 
 	rows, err := r.db.QueryContext(
 		ctx,
-		`SELECT id, user_id, note_type, COALESCE(note_files, '[]'), created_at FROM notes WHERE user_id = ? ORDER BY created_at ASC`,
+		`SELECT `+noteColumns+` FROM notes WHERE user_id = ? ORDER BY created_at ASC`,
 		userID,
 	)
 	if err != nil {
@@ -385,14 +403,10 @@ func (r *Repository) ListNotesByUserID(ctx context.Context, userID string) ([]do
 
 	notes := make([]domain.Note, 0)
 	for rows.Next() {
-		var note domain.Note
-		var noteFilesJSON string
-		var createdAt string
-		if err := rows.Scan(&note.ID, &note.UserID, &note.NoteType, &noteFilesJSON, &createdAt); err != nil {
+		note, err := scanNote(rows, false)
+		if err != nil {
 			return nil, err
 		}
-		note.NoteFiles = unmarshalNoteFiles(noteFilesJSON)
-		note.CreatedAt = parseSQLiteTime(createdAt)
 		notes = append(notes, note)
 	}
 
@@ -404,7 +418,7 @@ func (r *Repository) getNote(ctx context.Context, noteID, userID string) (domain
 		return domain.Note{}, errors.New("note id must be valid UUID")
 	}
 
-	query := `SELECT id, user_id, note_type, COALESCE(note_files, '[]'), created_at FROM notes WHERE id = ?`
+	query := `SELECT ` + noteColumns + ` FROM notes WHERE id = ?`
 	args := []any{noteID}
 	if userID != "" {
 		if _, err := uuid.Parse(strings.TrimSpace(userID)); err != nil {
@@ -416,16 +430,7 @@ func (r *Repository) getNote(ctx context.Context, noteID, userID string) (domain
 
 	row := r.db.QueryRowContext(ctx, query, args...)
 
-	var note domain.Note
-	var noteFilesJSON string
-	var createdAt string
-	if err := row.Scan(&note.ID, &note.UserID, &note.NoteType, &noteFilesJSON, &createdAt); err != nil {
-		return domain.Note{}, err
-	}
-
-	note.NoteFiles = unmarshalNoteFiles(noteFilesJSON)
-	note.CreatedAt = parseSQLiteTime(createdAt)
-	return note, nil
+	return scanNote(row, false)
 }
 
 func marshalNoteFiles(noteFiles []string) (string, error) {
@@ -1271,6 +1276,8 @@ func normalizeDestination(channel domain.OTPChannel, destination string) string 
 	switch channel {
 	case domain.OTPChannelWhatsApp:
 		return normalizePhone(destination)
+	case domain.OTPChannelEmail:
+		return strings.ToLower(strings.TrimSpace(destination))
 	default:
 		return strings.TrimSpace(destination)
 	}

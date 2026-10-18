@@ -56,16 +56,18 @@ type OTPRepository interface {
 }
 
 type OTPService struct {
-	repo            OTPRepository
-	hmacSecret      []byte
-	requestCooldown time.Duration
-	maxAttempts     int
-	lockDuration    time.Duration
-	otpTTL          time.Duration
-	log             *zap.Logger
-	testStore       *otpTestStore
-	sender          OTPSender
-	staticTest      otpStaticTestConfig
+	channel            domain.OTPChannel
+	retainTestingCodes bool
+	repo               OTPRepository
+	hmacSecret         []byte
+	requestCooldown    time.Duration
+	maxAttempts        int
+	lockDuration       time.Duration
+	otpTTL             time.Duration
+	log                *zap.Logger
+	testStore          *otpTestStore
+	sender             OTPSender
+	staticTest         otpStaticTestConfig
 }
 
 type otpStaticTestConfig struct {
@@ -146,15 +148,17 @@ func NewOTPService(repo OTPRepository, otpCfg config.OTPConfig, log *zap.Logger,
 	}
 
 	return &OTPService{
-		repo:            repo,
-		hmacSecret:      []byte(secret),
-		requestCooldown: cooldown,
-		maxAttempts:     maxAttempts,
-		lockDuration:    lockDuration,
-		otpTTL:          expiresIn,
-		log:             log,
-		testStore:       newOTPTestStore(),
-		sender:          sender,
+		channel:            domain.OTPChannelWhatsApp,
+		retainTestingCodes: true,
+		repo:               repo,
+		hmacSecret:         []byte(secret),
+		requestCooldown:    cooldown,
+		maxAttempts:        maxAttempts,
+		lockDuration:       lockDuration,
+		otpTTL:             expiresIn,
+		log:                log,
+		testStore:          newOTPTestStore(),
+		sender:             sender,
 		staticTest: otpStaticTestConfig{
 			Enabled: otpCfg.TestEnabled,
 			Phone:   normalizePhone(otpCfg.TestPhone),
@@ -190,6 +194,9 @@ func (s *OTPService) requestOTPInternal(
 	if err := validateOTPDestination(channel, destination); err != nil {
 		return domain.OTPRequestResult{}, err
 	}
+	if channel != s.channel {
+		return domain.OTPRequestResult{}, ErrInvalidOTPChannel
+	}
 	if purpose == "" {
 		return domain.OTPRequestResult{}, ErrInvalidAuthPurpose
 	}
@@ -219,7 +226,7 @@ func (s *OTPService) requestOTPInternal(
 	}
 	var code string
 	staticBypass := false
-	if staticCode, ok := s.lookupStaticTestingOTP(destination); ok {
+	if staticCode, ok := s.lookupStaticTestingOTP(destination); ok && channel == domain.OTPChannelWhatsApp {
 		code = staticCode
 		staticBypass = true
 	} else {
@@ -236,7 +243,13 @@ func (s *OTPService) requestOTPInternal(
 	}
 
 	if !staticBypass {
-		if err := s.sender.SendOTP(ctx, destination, code); err != nil {
+		var sendErr error
+		if sender, ok := s.sender.(requestAwareOTPSender); ok {
+			sendErr = sender.SendOTPForRequest(ctx, destination, code, requestID)
+		} else {
+			sendErr = s.sender.SendOTP(ctx, destination, code)
+		}
+		if err := sendErr; err != nil {
 			s.testStore.delete(channel, destination)
 			if deleteErr := s.repo.DeleteOTPRequest(ctx, requestID); deleteErr != nil {
 				s.log.Warn("failed to delete otp after delivery failure",
@@ -249,14 +262,16 @@ func (s *OTPService) requestOTPInternal(
 		}
 	}
 
-	s.testStore.set(domain.OTPTestingCode{
-		RequestID:   requestID,
-		Channel:     channel,
-		Destination: destination,
-		Code:        code,
-		CreatedAt:   now,
-		ExpiresAt:   expiresAt,
-	})
+	if s.retainTestingCodes {
+		s.testStore.set(domain.OTPTestingCode{
+			RequestID:   requestID,
+			Channel:     channel,
+			Destination: destination,
+			Code:        code,
+			CreatedAt:   now,
+			ExpiresAt:   expiresAt,
+		})
+	}
 
 	result := domain.OTPRequestResult{
 		RequestID:        requestID,
@@ -279,6 +294,9 @@ func (s *OTPService) VerifyOTP(ctx context.Context, requestID, code string) (dom
 		}
 		return domain.OTPVerifyResult{}, err
 	}
+	if req.Channel != s.channel {
+		return domain.OTPVerifyResult{}, ErrOTPRequestNotFound
+	}
 
 	now := time.Now().UTC()
 	lockState, lockErr := s.repo.GetOTPLockState(ctx, req.Channel, req.Destination)
@@ -294,6 +312,9 @@ func (s *OTPService) VerifyOTP(ctx context.Context, requestID, code string) (dom
 	}
 	if now.After(req.ExpiresAt) {
 		return domain.OTPVerifyResult{}, ErrOTPExpired
+	}
+	if req.Channel == domain.OTPChannelEmail && req.Attempts >= req.MaxAttempts {
+		return domain.OTPVerifyResult{}, ErrOTPTooManyAttempts
 	}
 
 	expectedHash := s.hashOTP(req.ID, req.Channel, req.Destination, code)
@@ -382,6 +403,8 @@ func normalizeOTPChannel(channel domain.OTPChannel) domain.OTPChannel {
 	switch strings.ToLower(strings.TrimSpace(string(channel))) {
 	case string(domain.OTPChannelWhatsApp):
 		return domain.OTPChannelWhatsApp
+	case string(domain.OTPChannelEmail):
+		return domain.OTPChannelEmail
 	default:
 		return domain.OTPChannel("")
 	}
@@ -391,6 +414,8 @@ func normalizeOTPDestination(channel domain.OTPChannel, destination string) stri
 	switch channel {
 	case domain.OTPChannelWhatsApp:
 		return normalizePhone(destination)
+	case domain.OTPChannelEmail:
+		return strings.ToLower(strings.TrimSpace(destination))
 	default:
 		return strings.TrimSpace(destination)
 	}
@@ -403,6 +428,11 @@ func validateOTPDestination(channel domain.OTPChannel, destination string) error
 	switch channel {
 	case domain.OTPChannelWhatsApp:
 		if !phoneE164Pattern.MatchString(destination) {
+			return ErrInvalidOTPDestination
+		}
+		return nil
+	case domain.OTPChannelEmail:
+		if _, valid := domain.NormalizeEmailAddress(destination); !valid {
 			return ErrInvalidOTPDestination
 		}
 		return nil

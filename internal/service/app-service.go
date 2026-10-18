@@ -87,7 +87,7 @@ func (s *AppService) UpdateUserLanguage(ctx context.Context, userID, userLanguag
 	return s.repo.UpdateUserLanguage(ctx, userID, userLanguage)
 }
 
-func (s *AppService) CreateNote(ctx context.Context, userID, noteType string, noteFiles []string) (domain.Note, error) {
+func (s *AppService) CreateNote(ctx context.Context, userID, noteType string, noteFiles []string, noteDate *string) (domain.Note, error) {
 	noteType = strings.TrimSpace(noteType)
 	if noteType == "" {
 		return domain.Note{}, ErrNoteTypeRequired
@@ -96,14 +96,17 @@ func (s *AppService) CreateNote(ctx context.Context, userID, noteType string, no
 		return domain.Note{}, ErrTooManyNoteFiles
 	}
 
-	return s.repo.CreateNote(ctx, userID, noteType, noteFiles)
+	if noteDate != nil && !domain.ValidNoteDate(*noteDate) {
+		return domain.Note{}, ErrInvalidNoteDate
+	}
+	return s.repo.CreateNote(ctx, userID, noteType, noteFiles, noteDate)
 }
 
 func (s *AppService) GetNote(ctx context.Context, noteID, userID string) (domain.Note, error) {
 	return s.repo.GetNoteByIDForUser(ctx, noteID, userID)
 }
 
-func (s *AppService) UpdateNote(ctx context.Context, noteID, userID, noteType string, noteFiles []string) (domain.Note, error) {
+func (s *AppService) UpdateNote(ctx context.Context, noteID, userID, noteType string, noteFiles []string, noteDate *string) (domain.Note, error) {
 	noteType = strings.TrimSpace(noteType)
 	if noteType == "" {
 		return domain.Note{}, ErrNoteTypeRequired
@@ -112,7 +115,10 @@ func (s *AppService) UpdateNote(ctx context.Context, noteID, userID, noteType st
 		return domain.Note{}, ErrTooManyNoteFiles
 	}
 
-	return s.repo.UpdateNote(ctx, noteID, userID, noteType, noteFiles)
+	if noteDate != nil && !domain.ValidNoteDate(*noteDate) {
+		return domain.Note{}, ErrInvalidNoteDate
+	}
+	return s.repo.UpdateNote(ctx, noteID, userID, noteType, noteFiles, noteDate)
 }
 
 func (s *AppService) DeleteNote(ctx context.Context, noteID, userID string) error {

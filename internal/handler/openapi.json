@@ -1,0 +1,3175 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Timeleak API",
+    "version": "1.2.0",
+    "description": "Versioned API under /api/v1 with WhatsApp OTP auth, refresh rotation, admin auth, and ads rotation. Notes API: выбранный день note_date, метаданные для календаря, загрузка файлов по требованию и обратная совместимость со старыми клиентами. OTP доступен по двум каналам: WhatsApp через WHAPI и email через Resend. Пользователь выбирает нужный канал; подтверждать оба подряд не требуется."
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Notes",
+      "description": "Flutter: 1) сохраняйте выбранный день в note_date; 2) календарь загружает fields=meta постранично до has_more=false; 3) бейджи строятся по note_date; 4) при выборе дня запросите by-date и скачайте только его файлы. При note_date_source=created_at исходный выбранный день неизвестен — его можно восстановить через PUT из локальной БД клиента."
+    },
+    {
+      "name": "OTP — WhatsApp",
+      "description": "Код на телефон через WhatsApp. Существующий поток: запрос кода → проверка → verification_token для телефонной регистрации. Телефон передавайте в международном формате, например +77015556677."
+    },
+    {
+      "name": "OTP — Email",
+      "description": "Код на электронную почту через Resend. Сначала запросите письмо, затем передайте request_id и код из письма в проверку. Это отдельный канал: email-код нельзя проверить через WhatsApp-маршрут и наоборот. Ключ Resend передавать с клиента не нужно."
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/otp/request": {
+      "post": {
+        "summary": "Отправить код в WhatsApp на телефон",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OTPRequestInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OTP requested",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPRequestResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Слишком частый запрос или временная блокировка номера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPError"
+                },
+                "example": {
+                  "error": "otp temporarily unavailable"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректный номер телефона или JSON.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPError"
+                },
+                "example": {
+                  "error": "invalid otp request"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "WHAPI не принял отправку сообщения.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPError"
+                },
+                "example": {
+                  "error": "otp delivery failed"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Отправка WhatsApp временно недоступна.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPError"
+                },
+                "example": {
+                  "error": "otp delivery unavailable"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPError"
+                },
+                "example": {
+                  "error": "internal"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OTP — WhatsApp"
+        ],
+        "operationId": "requestWhatsAppOTP",
+        "description": "Передайте phone в международном формате. Отправим код из 4 цифр через WHAPI. Сохраните request_id из ответа, затем вызовите /api/v1/auth/otp/verify. Сам код в ответе API не возвращается.\n\nЭто существующий телефонный поток регистрации: формат запроса и ответа сохранён. Email сюда передавать не нужно — для него есть /api/v1/auth/email-otp/request. Для каждого действия пользователь выбирает один нужный канал."
+      }
+    },
+    "/api/v1/auth/otp/verify": {
+      "post": {
+        "summary": "Подтвердить код из WhatsApp",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OTPVerifyInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OTP verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPVerifyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Неверный, использованный, истёкший код или request_id другого канала.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPError"
+                },
+                "example": {
+                  "error": "otp verification failed"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Слишком много неверных попыток; проверка временно заблокирована.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPError"
+                },
+                "example": {
+                  "error": "otp temporarily locked"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPError"
+                },
+                "example": {
+                  "error": "internal"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OTP — WhatsApp"
+        ],
+        "operationId": "verifyWhatsAppOTP",
+        "description": "Передайте request_id из WhatsApp-отправки и код строкой. Вернём verification_token для следующего шага телефонной регистрации через /api/v1/auth/register. Это не access_token. Код одноразовый, срок и число попыток ограничены.\n\nСуществующий формат ответа сохранён. Запросы и коды email через этот маршрут не подтверждаются: для них используйте /api/v1/auth/email-otp/verify."
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "summary": "Complete registration with verified OTP token and password",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload or verification token"
+          },
+          "409": {
+            "description": "User already exists"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "summary": "Login by phone and password",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload"
+          },
+          "401": {
+            "description": "Invalid credentials"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/password-reset/otp/request": {
+      "post": {
+        "summary": "Request OTP for password reset",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OTPRequestInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OTP requested",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPRequestResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited or temporarily locked"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/password-reset/otp/verify": {
+      "post": {
+        "summary": "Verify password reset OTP and return verification token",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OTPVerifyInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OTP verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPVerifyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid OTP payload or code"
+          },
+          "429": {
+            "description": "Too many attempts"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/password-reset/confirm": {
+      "post": {
+        "summary": "Set new password after password reset OTP verification",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordResetConfirmRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Password updated"
+          },
+          "400": {
+            "description": "Invalid payload or verification token"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/refresh": {
+      "post": {
+        "summary": "Rotate refresh token and get new token pair",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Refreshed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenPayload"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid/expired/revoked refresh token"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "summary": "Legacy token claims endpoint",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Claims"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "summary": "Get current user profile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/notes": {
+      "post": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "createUserNote",
+        "summary": "Создать заметку на выбранный день",
+        "description": "Передавайте note_date для выбранного дня календаря. createdAt — время создания на сервере. Файлы необязательны, максимум 5. В multipart повторяйте поле files для каждого файла. JSON поддерживается для заметок без вложений.\n\nДля старых клиентов отсутствие note_date разрешено: используется день создания в UTC, note_date_source=created_at. Новому Flutter-клиенту следует всегда передавать note_date. Метаданные определяются автоматически.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Создано",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Note"
+                },
+                "example": {
+                  "id": "550e8400-e29b-41d4-a716-446655440000",
+                  "note_type": "Заметка на 15.10.2036",
+                  "note_date": "2036-10-15",
+                  "note_date_source": "selected",
+                  "file_count": 1,
+                  "file_type": "image",
+                  "createdAt": "2026-10-17T09:00:00Z",
+                  "userId": "550e8400-e29b-41d4-a716-446655440099",
+                  "note_files": [
+                    "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректная дата, UUID, параметры или тело запроса.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "bad request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Отсутствует, истек или некорректен access token. Обновите токен через POST /api/v1/auth/refresh.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "unauthorized"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Передан токен с неподходящей ролью, например admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "forbidden"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заметка не найдена или принадлежит другому пользователю.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "not found"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "internal"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthNoteUploadRequest"
+              },
+              "encoding": {
+                "files": {
+                  "style": "form",
+                  "explode": true
+                }
+              }
+            },
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthNoteCreateJSON"
+              },
+              "examples": {
+                "selectedDay": {
+                  "value": {
+                    "note_type": "Заметка на 15.10.2036",
+                    "note_date": "2036-10-15"
+                  }
+                },
+                "legacyClient": {
+                  "value": {
+                    "note_type": "Старая заметка"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "listUserNotes",
+        "summary": "Заметки: календарь, диапазон или старый список",
+        "description": "Для календаря: GET /api/v1/auth/notes?from=2036-10-01&to=2036-10-31&fields=meta. Загружайте все страницы до has_more=false, затем отображайте бейджи по note_date. Файлы на этом шаге не скачивайте.\n\nДиапазон фильтруется по выбранному дню note_date, а не createdAt. Порядок: note_date ASC, createdAt ASC, id ASC. Повторяющиеся известные параметры и недопустимые значения возвращают 400.\n\nБез from/to и без fields/page/limit сохраняется устаревшая выдача всех заметок без пагинации с прежними полями; этот режим не используйте в новом клиенте.\n\nПри конкурентном добавлении/удалении записи между запросами страниц страницы могут сдвигаться: при необходимости повторите синхронизацию.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Режим определяется query-параметрами: без дат — NotesListResponse, с датами — NotesPageResponse, с fields=meta — NotesMetadataPageResponse. Пустые выборки возвращают data: [].",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NotesListResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NotesPageResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NotesMetadataPageResponse"
+                    }
+                  ]
+                },
+                "examples": {
+                  "calendarMetadata": {
+                    "summary": "Календарь: fields=meta",
+                    "value": {
+                      "data": [
+                        {
+                          "id": "550e8400-e29b-41d4-a716-446655440000",
+                          "note_type": "Заметка на 15.10.2036",
+                          "note_date": "2036-10-15",
+                          "note_date_source": "selected",
+                          "file_count": 1,
+                          "file_type": "image",
+                          "createdAt": "2026-10-17T09:00:00Z"
+                        }
+                      ],
+                      "total": 1,
+                      "page": 1,
+                      "limit": 100,
+                      "has_more": false
+                    }
+                  },
+                  "fullRange": {
+                    "summary": "Диапазон с URL файлов",
+                    "value": {
+                      "data": [
+                        {
+                          "id": "550e8400-e29b-41d4-a716-446655440000",
+                          "note_type": "Заметка на 15.10.2036",
+                          "note_date": "2036-10-15",
+                          "note_date_source": "selected",
+                          "file_count": 1,
+                          "file_type": "image",
+                          "createdAt": "2026-10-17T09:00:00Z",
+                          "userId": "550e8400-e29b-41d4-a716-446655440099",
+                          "note_files": [
+                            "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
+                          ]
+                        }
+                      ],
+                      "total": 1,
+                      "page": 1,
+                      "limit": 100,
+                      "has_more": false
+                    }
+                  },
+                  "emptyPage": {
+                    "summary": "Пустая страница",
+                    "value": {
+                      "data": [],
+                      "total": 0,
+                      "page": 1,
+                      "limit": 100,
+                      "has_more": false
+                    }
+                  },
+                  "legacy": {
+                    "summary": "Старый вызов без параметров",
+                    "value": {
+                      "data": [
+                        {
+                          "id": "550e8400-e29b-41d4-a716-446655440000",
+                          "userId": "550e8400-e29b-41d4-a716-446655440099",
+                          "note_type": "Заметка на 15.10.2036",
+                          "note_files": [
+                            "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
+                          ],
+                          "createdAt": "2026-10-17T09:00:00Z"
+                        }
+                      ],
+                      "total": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректная дата, UUID, параметры или тело запроса.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "bad request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Отсутствует, истек или некорректен access token. Обновите токен через POST /api/v1/auth/refresh.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "unauthorized"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Передан токен с неподходящей ролью, например admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "forbidden"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "internal"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+              "example": "2036-10-15",
+              "description": "Выбранный пользователем день календаря, YYYY-MM-DD (годы 0001..9999). Это дата без времени и часового пояса. Во Flutter форматируйте выбранный день напрямую; не преобразовывайте его через toUtc()."
+            },
+            "description": "Начало диапазона note_date, включительно. Обязательно вместе с to при использовании нового режима, fields, page или limit."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+              "example": "2036-10-15",
+              "description": "Выбранный пользователем день календаря, YYYY-MM-DD (годы 0001..9999). Это дата без времени и часового пояса. Во Flutter форматируйте выбранный день напрямую; не преобразовывайте его через toUtc()."
+            },
+            "description": "Конец диапазона note_date, включительно; to >= from. Без обеих дат доступен только старый режим без fields/page/limit."
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "meta"
+              ]
+            },
+            "description": "meta — только метаданные без userId и note_files. Если параметр отсутствует, возвращаются полные заметки. Требует from и to."
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "description": "Страница с 1. Требует from и to. Слишком большое значение с переполнением смещения возвращает 400."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            },
+            "description": "Размер страницы. Значения вне 1..500 возвращают 400. Требует from и to."
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/notes/by-date": {
+      "get": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "listUserNotesByDate",
+        "summary": "Все заметки выбранного дня с URL файлов",
+        "description": "Вызывайте при выборе дня в календаре. Фильтр использует note_date и возвращает все заметки дня без пагинации. После ответа скачивайте только нужные файлы из note_files. Порядок: createdAt ASC, id ASC. Если заметок нет: {\"data\":[],\"total\":0}.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotesByDateResponse"
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": "550e8400-e29b-41d4-a716-446655440000",
+                      "note_type": "Заметка на 15.10.2036",
+                      "note_date": "2036-10-15",
+                      "note_date_source": "selected",
+                      "file_count": 1,
+                      "file_type": "image",
+                      "createdAt": "2026-10-17T09:00:00Z",
+                      "userId": "550e8400-e29b-41d4-a716-446655440099",
+                      "note_files": [
+                        "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
+                      ]
+                    }
+                  ],
+                  "total": 1
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректная дата, UUID, параметры или тело запроса.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "bad request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Отсутствует, истек или некорректен access token. Обновите токен через POST /api/v1/auth/refresh.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "unauthorized"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Передан токен с неподходящей ролью, например admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "forbidden"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "internal"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+              "example": "2036-10-15",
+              "description": "Выбранный пользователем день календаря, YYYY-MM-DD (годы 0001..9999). Это дата без времени и часового пояса. Во Flutter форматируйте выбранный день напрямую; не преобразовывайте его через toUtc()."
+            },
+            "description": "Выбранный день календаря, YYYY-MM-DD."
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/notes/{id}": {
+      "get": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "getUserNote",
+        "summary": "Получить одну заметку",
+        "description": "Полная заметка текущего пользователя с URL файлов. Возвращается объект напрямую, без обертки data. Используйте для точечной синхронизации или повторного скачивания файла. Для чужого и отсутствующего UUID ответ одинаковый: 404.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Note"
+                },
+                "example": {
+                  "id": "550e8400-e29b-41d4-a716-446655440000",
+                  "note_type": "Заметка на 15.10.2036",
+                  "note_date": "2036-10-15",
+                  "note_date_source": "selected",
+                  "file_count": 1,
+                  "file_type": "image",
+                  "createdAt": "2026-10-17T09:00:00Z",
+                  "userId": "550e8400-e29b-41d4-a716-446655440099",
+                  "note_files": [
+                    "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректная дата, UUID, параметры или тело запроса.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "bad request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Отсутствует, истек или некорректен access token. Обновите токен через POST /api/v1/auth/refresh.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "unauthorized"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Передан токен с неподходящей ролью, например admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "forbidden"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заметка не найдена или принадлежит другому пользователю.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "not found"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "internal"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "updateUserNote",
+        "summary": "Изменить заметку, дату или вложения",
+        "description": "Все поля необязательны. Отсутствующее note_type сохраняет название. Отсутствующее note_date сохраняет текущий день и его источник; переданное note_date устанавливает note_date_source=selected. Это также позволяет восстановить дату старой заметки из локальной БД приложения.\n\nНепустой список files заменяет все старые вложения. Отсутствие files сохраняет их; пустым списком удалить вложения нельзя. file_count и file_type пересчитываются автоматически. createdAt не меняется.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Note"
+                },
+                "example": {
+                  "id": "550e8400-e29b-41d4-a716-446655440000",
+                  "note_type": "Заметка на 15.10.2036",
+                  "note_date": "2036-10-15",
+                  "note_date_source": "selected",
+                  "file_count": 1,
+                  "file_type": "image",
+                  "createdAt": "2026-10-17T09:00:00Z",
+                  "userId": "550e8400-e29b-41d4-a716-446655440099",
+                  "note_files": [
+                    "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректная дата, UUID, параметры или тело запроса.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "bad request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Отсутствует, истек или некорректен access token. Обновите токен через POST /api/v1/auth/refresh.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "unauthorized"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Передан токен с неподходящей ролью, например admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "forbidden"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заметка не найдена или принадлежит другому пользователю.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "not found"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "internal"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/NoteUpdateRequest"
+              },
+              "encoding": {
+                "files": {
+                  "style": "form",
+                  "explode": true
+                }
+              }
+            },
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NoteUpdateJSON"
+              },
+              "examples": {
+                "moveDay": {
+                  "value": {
+                    "note_date": "2036-10-15"
+                  }
+                },
+                "rename": {
+                  "value": {
+                    "note_type": "Новое название"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "deleteUserNote",
+        "summary": "Удалить заметку и ее файлы",
+        "description": "Удаляет заметку текущего пользователя и сохраненные вложения.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Удалено",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "status"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    }
+                  }
+                },
+                "example": {
+                  "status": "ok"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректная дата, UUID, параметры или тело запроса.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "bad request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Отсутствует, истек или некорректен access token. Обновите токен через POST /api/v1/auth/refresh.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "unauthorized"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Передан токен с неподходящей ролью, например admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "forbidden"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заметка не найдена или принадлежит другому пользователю.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "not found"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "internal"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/note-files/{path}": {
+      "get": {
+        "summary": "Download stored note file",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Stored relative note file path such as audio/uuid.mp3"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File content"
+          },
+          "404": {
+            "description": "File not found"
+          }
+        }
+      }
+    },
+    "/api/v1/users/{id}": {
+      "get": {
+        "summary": "Get user by ID",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{id}/language": {
+      "put": {
+        "summary": "Update user language",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LanguageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated"
+          }
+        }
+      }
+    },
+    "/api/v1/notes": {
+      "post": {
+        "summary": "Create note by userId",
+        "description": "Старый маршрут создания по userId, сохранен для совместимости. Новые клиенты должны использовать POST /api/v1/auth/notes с Bearer token. Поддерживает note_date; при отсутствии используется день создания в UTC.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateNoteRequest"
+              },
+              "encoding": {
+                "files": {
+                  "style": "form",
+                  "explode": true
+                }
+              }
+            },
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LegacyNoteCreateJSON"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Создано",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Note"
+                },
+                "example": {
+                  "id": "550e8400-e29b-41d4-a716-446655440000",
+                  "note_type": "Заметка на 15.10.2036",
+                  "note_date": "2036-10-15",
+                  "note_date_source": "selected",
+                  "file_count": 1,
+                  "file_type": "image",
+                  "createdAt": "2026-10-17T09:00:00Z",
+                  "userId": "550e8400-e29b-41d4-a716-446655440099",
+                  "note_files": [
+                    "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректная дата, UUID, параметры или тело запроса.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "bad request"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заметка не найдена или принадлежит другому пользователю.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "not found"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteError"
+                },
+                "example": {
+                  "error": "internal"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "createLegacyNote",
+        "deprecated": true
+      }
+    },
+    "/api/v1/admin/auth/login": {
+      "post": {
+        "summary": "Admin login",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminLoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminLoginResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/ads": {
+      "post": {
+        "summary": "Create ad",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAdRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ad"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List ads",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
+          },
+          {
+            "name": "active",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ads list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdsListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/ads/{id}": {
+      "put": {
+        "summary": "Update ad",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAdRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ad"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete ad",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted"
+          }
+        }
+      }
+    },
+    "/api/v1/ads/next": {
+      "get": {
+        "summary": "Get next ad for authenticated user",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ad",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ad"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No active ads"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/testing/otp/latest": {
+      "get": {
+        "summary": "Get latest OTP code (DEV ONLY)",
+        "description": "DEV ONLY: returns OTP code in plain text for testing. Requires ENABLE_TESTING_ENDPOINTS=true.",
+        "parameters": [
+          {
+            "name": "phone",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "+77015556677"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OTP code in plain text",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "example": "1234"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Disabled or code not found"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/testing/auth/access-token": {
+      "post": {
+        "summary": "Create permanent access token by phone (DEV ONLY)",
+        "description": "DEV ONLY: creates a user access token without exp claim. Requires ENABLE_TESTING_ENDPOINTS=true and an existing user with the provided phone.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestingAccessTokenRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Permanent access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestingAccessTokenResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid phone payload"
+          },
+          "404": {
+            "description": "Disabled or user not found"
+          }
+        }
+      }
+    },
+    "/api/delete/user": {
+      "delete": {
+        "summary": "Deactivate user (soft delete)",
+        "description": "Sets isActive=false on the user record. The user is NOT removed from the database. Requires admin JWT. Login is blocked for deactivated users.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteUserRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "User deactivated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteUserResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid user_id"
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid admin token"
+          },
+          "404": {
+            "description": "User not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/email-otp/request": {
+      "post": {
+        "tags": [
+          "OTP — Email"
+        ],
+        "security": [],
+        "operationId": "requestEmailOTP",
+        "summary": "Отправить код подтверждения на email",
+        "description": "Передайте email — отправим письмо с кодом из 4 цифр через Resend. Токен пользователя для этого запроса не нужен. В ответе сохраните request_id: он понадобится при проверке кода. Сам код в API-ответе не возвращается.\n\nПо умолчанию код действует 5 минут, новое письмо можно запросить через 32 секунды. Лимит — 10 попыток отправки на один нормализованный адрес за последние 24 часа; настройки берутся из OTP_RESEND_COOLDOWN и RATE_OTP_REQUEST_PER_DAY. Лимит общий для всех запросов на этот email и сохраняется после перезапуска сервера. Неудачная попытка отправки тоже учитывается.\n\nПовторная отправка создаёт новый request_id. Используйте последний код и последний request_id; прежний запрос после успешной повторной отправки проверить нельзя. Ответ 200 означает, что Resend принял письмо к отправке. Если пришёл 429, покажите таймер из retry_after_seconds. Для WhatsApp используйте /api/v1/auth/otp/request.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailOTPRequestInput"
+              },
+              "example": {
+                "email": "user@example.com"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Письмо принято почтовым сервисом. Сохраните request_id и запустите таймер повторной отправки.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailOTPRequestResponse"
+                },
+                "example": {
+                  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+                  "expires_in_seconds": 300,
+                  "email": "user@example.com",
+                  "resend_after_seconds": 32
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Неверный email или некорректный JSON. Передавайте только поле email.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPError"
+                },
+                "example": {
+                  "error": "invalid email address"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Слишком частый запрос, исчерпан лимит за 24 часа или временная блокировка. Дождитесь Retry-After; клиенту не нужно повторять запрос в цикле.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailOTPRateError"
+                },
+                "examples": {
+                  "cooldown": {
+                    "summary": "Ещё не прошла пауза между письмами",
+                    "value": {
+                      "error": "email otp request is too frequent",
+                      "retry_after_seconds": 32
+                    }
+                  },
+                  "dailyLimit": {
+                    "summary": "Исчерпан лимит запросов на этот email",
+                    "value": {
+                      "error": "email otp daily request limit reached",
+                      "retry_after_seconds": 3600
+                    }
+                  },
+                  "locked": {
+                    "summary": "Слишком много неверных кодов",
+                    "value": {
+                      "error": "email otp temporarily locked",
+                      "retry_after_seconds": 120
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Пауза в секундах, столько же в retry_after_seconds.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Не удалось отправить письмо через Resend. Код этого запроса недействителен.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPError"
+                },
+                "example": {
+                  "error": "email otp delivery failed"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Отправка email временно недоступна или не настроена на сервере.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPError"
+                },
+                "example": {
+                  "error": "email otp delivery unavailable"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPError"
+                },
+                "example": {
+                  "error": "internal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/email-otp/verify": {
+      "post": {
+        "tags": [
+          "OTP — Email"
+        ],
+        "security": [],
+        "operationId": "verifyEmailOTP",
+        "summary": "Подтвердить код из email",
+        "description": "Передайте request_id из отправки и код из письма строкой, например \"0123\". При успехе возвращаем verified: true и подтверждённый email. Адрес берём из самого запроса OTP — подменить его при проверке нельзя. Токен пользователя здесь не нужен.\n\nКод одноразовый. Повторная проверка использованного кода, истёкший код, неверный код или request_id другого канала вернут 400. По умолчанию после 5 неверных попыток действует блокировка на 120 секунд; затем нужно запросить новый код. Настройки попыток и блокировки общие с OTP_MAX_ATTEMPTS и OTP_LOCK_DURATION_SEC.\n\nЭтот ответ подтверждает email. Аккаунт автоматически не создаётся, access_token и refresh_token здесь не выдаются; существующая телефонная регистрация и вход сохраняют свой контракт. Для WhatsApp используйте /api/v1/auth/otp/verify.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailOTPVerifyInput"
+              },
+              "example": {
+                "request_id": "550e8400-e29b-41d4-a716-446655440000",
+                "code": "0123"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Код принят один раз, email подтверждён.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailOTPVerifyResponse"
+                },
+                "example": {
+                  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+                  "email": "user@example.com",
+                  "verified": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Проверьте код и request_id. Возможно, код уже использован, истёк или относится к другому каналу.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPError"
+                },
+                "example": {
+                  "error": "email otp verification failed"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Слишком частый запрос, исчерпан лимит за 24 часа или временная блокировка. Дождитесь Retry-After; клиенту не нужно повторять запрос в цикле.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailOTPRateError"
+                },
+                "examples": {
+                  "cooldown": {
+                    "summary": "Ещё не прошла пауза между письмами",
+                    "value": {
+                      "error": "email otp request is too frequent",
+                      "retry_after_seconds": 32
+                    }
+                  },
+                  "dailyLimit": {
+                    "summary": "Исчерпан лимит запросов на этот email",
+                    "value": {
+                      "error": "email otp daily request limit reached",
+                      "retry_after_seconds": 3600
+                    }
+                  },
+                  "locked": {
+                    "summary": "Слишком много неверных кодов",
+                    "value": {
+                      "error": "email otp temporarily locked",
+                      "retry_after_seconds": 120
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Пауза в секундах, столько же в retry_after_seconds.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Проверка email временно недоступна.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPError"
+                },
+                "example": {
+                  "error": "email otp delivery unavailable"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OTPError"
+                },
+                "example": {
+                  "error": "internal"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "example": "unauthorized"
+          }
+        }
+      },
+      "OTPRequestInput": {
+        "type": "object",
+        "required": [
+          "phone"
+        ],
+        "properties": {
+          "phone": {
+            "type": "string",
+            "example": "+77015556677"
+          }
+        }
+      },
+      "OTPRequestResponse": {
+        "type": "object",
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "expires_in_seconds": {
+            "type": "integer",
+            "example": 300
+          }
+        }
+      },
+      "OTPVerifyInput": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "code"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "example": "1234"
+          }
+        }
+      },
+      "OTPVerifyResponse": {
+        "type": "object",
+        "properties": {
+          "verification_token": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string",
+            "example": "+77015556677"
+          },
+          "expires_in_seconds": {
+            "type": "integer",
+            "example": 300
+          }
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": [
+          "phone",
+          "password",
+          "confirm_password",
+          "verification_token"
+        ],
+        "properties": {
+          "phone": {
+            "type": "string",
+            "example": "+77015556677"
+          },
+          "password": {
+            "type": "string",
+            "example": "StrongPass123!"
+          },
+          "confirm_password": {
+            "type": "string",
+            "example": "StrongPass123!"
+          },
+          "verification_token": {
+            "type": "string"
+          }
+        }
+      },
+      "RegisterResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "registered"
+          },
+          "user": {
+            "$ref": "#/components/schemas/User"
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "phone",
+          "password"
+        ],
+        "properties": {
+          "phone": {
+            "type": "string",
+            "example": "+77015556677"
+          },
+          "password": {
+            "type": "string",
+            "example": "StrongPass123!"
+          }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/User"
+          },
+          "access_token": {
+            "type": "string"
+          },
+          "refresh_token": {
+            "type": "string"
+          },
+          "expires_in_seconds": {
+            "type": "integer",
+            "example": 60
+          }
+        }
+      },
+      "PasswordResetConfirmRequest": {
+        "type": "object",
+        "required": [
+          "phone",
+          "new_password",
+          "confirm_password",
+          "verification_token"
+        ],
+        "properties": {
+          "phone": {
+            "type": "string",
+            "example": "+77015556677"
+          },
+          "new_password": {
+            "type": "string",
+            "example": "NewPass123!"
+          },
+          "confirm_password": {
+            "type": "string",
+            "example": "NewPass123!"
+          },
+          "verification_token": {
+            "type": "string"
+          }
+        }
+      },
+      "TokenPayload": {
+        "type": "object",
+        "properties": {
+          "access_token": {
+            "type": "string"
+          },
+          "refresh_token": {
+            "type": "string"
+          },
+          "expires_in_seconds": {
+            "type": "integer",
+            "example": 60
+          }
+        }
+      },
+      "RefreshRequest": {
+        "type": "object",
+        "required": [
+          "refresh_token"
+        ],
+        "properties": {
+          "refresh_token": {
+            "type": "string"
+          }
+        }
+      },
+      "LanguageRequest": {
+        "type": "object",
+        "required": [
+          "userLanguage"
+        ],
+        "properties": {
+          "userLanguage": {
+            "type": "string",
+            "example": "ru"
+          }
+        }
+      },
+      "AuthNoteUploadRequest": {
+        "type": "object",
+        "required": [
+          "note_type"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "note_type": {
+            "type": "string",
+            "minLength": 1,
+            "example": "Заметка на 15.10.2036"
+          },
+          "note_date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "example": "2036-10-15",
+            "description": "Выбранный пользователем день календаря, YYYY-MM-DD (годы 0001..9999). Это дата без времени и часового пояса. Во Flutter форматируйте выбранный день напрямую; не преобразовывайте его через toUtc()."
+          },
+          "files": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "string",
+              "format": "binary"
+            },
+            "description": "От 0 до 5 файлов. Каждый файл передается отдельной multipart-частью с одинаковым именем files. При PUT непустой список заменяет все прежние файлы; отсутствие файлов сохраняет вложения."
+          }
+        }
+      },
+      "CreateNoteRequest": {
+        "type": "object",
+        "required": [
+          "userId",
+          "note_type"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "note_type": {
+            "type": "string",
+            "minLength": 1,
+            "example": "Заметка на 15.10.2036"
+          },
+          "note_date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "example": "2036-10-15",
+            "description": "Выбранный пользователем день календаря, YYYY-MM-DD (годы 0001..9999). Это дата без времени и часового пояса. Во Flutter форматируйте выбранный день напрямую; не преобразовывайте его через toUtc()."
+          },
+          "files": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "string",
+              "format": "binary"
+            },
+            "description": "От 0 до 5 файлов. Каждый файл передается отдельной multipart-частью с одинаковым именем files. При PUT непустой список заменяет все прежние файлы; отсутствие файлов сохраняет вложения."
+          }
+        }
+      },
+      "NoteUpdateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "note_type": {
+            "type": "string",
+            "minLength": 1,
+            "example": "Заметка на 15.10.2036"
+          },
+          "note_date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "example": "2036-10-15",
+            "description": "Выбранный пользователем день календаря, YYYY-MM-DD (годы 0001..9999). Это дата без времени и часового пояса. Во Flutter форматируйте выбранный день напрямую; не преобразовывайте его через toUtc()."
+          },
+          "files": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "string",
+              "format": "binary"
+            },
+            "description": "От 0 до 5 файлов. Каждый файл передается отдельной multipart-частью с одинаковым именем files. При PUT непустой список заменяет все прежние файлы; отсутствие файлов сохраняет вложения."
+          }
+        }
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "phone": {
+            "type": "string",
+            "example": "+77015556677"
+          },
+          "userLanguage": {
+            "type": "string",
+            "example": "en"
+          },
+          "isActive": {
+            "type": "boolean",
+            "example": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Note": {
+        "type": "object",
+        "required": [
+          "id",
+          "note_type",
+          "note_date",
+          "note_date_source",
+          "file_count",
+          "file_type",
+          "createdAt",
+          "userId",
+          "note_files"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "note_type": {
+            "type": "string",
+            "minLength": 1,
+            "example": "Заметка на 15.10.2036"
+          },
+          "note_date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "example": "2036-10-15",
+            "description": "Выбранный пользователем день календаря, YYYY-MM-DD (годы 0001..9999). Это дата без времени и часового пояса. Во Flutter форматируйте выбранный день напрямую; не преобразовывайте его через toUtc()."
+          },
+          "note_date_source": {
+            "type": "string",
+            "enum": [
+              "selected",
+              "created_at"
+            ],
+            "description": "selected — дата передана клиентом. created_at — запасная дата: день createdAt в UTC для старых заметок или запросов без note_date. Для восстановления исходной даты отправьте PUT с note_date."
+          },
+          "file_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5,
+            "example": 1
+          },
+          "file_type": {
+            "type": "string",
+            "enum": [
+              "",
+              "image",
+              "video",
+              "audio",
+              "document"
+            ],
+            "description": "Тип первого непустого файла по расширению, без учета регистра. Для смешанных вложений используется первый файл. Пустая строка означает отсутствие файлов. image: jpg/jpeg/png/heic/webp/gif/bmp; video: mp4/mov/avi/mkv/webm/m4v; audio: m4a/mp3/wav/aac/ogg/flac; остальные — document. Каталог изображений в существующих URL остается photo/."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Момент создания записи на сервере. Не используйте для привязки к дню календаря. При PUT не изменяется."
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "note_files": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "URL файлов в порядке загрузки. Файлы скачиваются отдельно только при открытии нужной заметки/дня. Без файлов возвращается []."
+          }
+        },
+        "example": {
+          "id": "550e8400-e29b-41d4-a716-446655440000",
+          "note_type": "Заметка на 15.10.2036",
+          "note_date": "2036-10-15",
+          "note_date_source": "selected",
+          "file_count": 1,
+          "file_type": "image",
+          "createdAt": "2026-10-17T09:00:00Z",
+          "userId": "550e8400-e29b-41d4-a716-446655440099",
+          "note_files": [
+            "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
+          ]
+        }
+      },
+      "NotesListResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "total"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LegacyNote"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "description": "Устаревший режим без from/to: все заметки, без пагинации, прежняя структура ответа.",
+        "example": {
+          "data": [
+            {
+              "id": "550e8400-e29b-41d4-a716-446655440000",
+              "userId": "550e8400-e29b-41d4-a716-446655440099",
+              "note_type": "Заметка на 15.10.2036",
+              "note_files": [
+                "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
+              ],
+              "createdAt": "2026-10-17T09:00:00Z"
+            }
+          ],
+          "total": 1
+        }
+      },
+      "NoteMetadata": {
+        "type": "object",
+        "required": [
+          "id",
+          "note_type",
+          "note_date",
+          "note_date_source",
+          "file_count",
+          "file_type",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "note_type": {
+            "type": "string",
+            "minLength": 1,
+            "example": "Заметка на 15.10.2036"
+          },
+          "note_date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "example": "2036-10-15",
+            "description": "Выбранный пользователем день календаря, YYYY-MM-DD (годы 0001..9999). Это дата без времени и часового пояса. Во Flutter форматируйте выбранный день напрямую; не преобразовывайте его через toUtc()."
+          },
+          "note_date_source": {
+            "type": "string",
+            "enum": [
+              "selected",
+              "created_at"
+            ],
+            "description": "selected — дата передана клиентом. created_at — запасная дата: день createdAt в UTC для старых заметок или запросов без note_date. Для восстановления исходной даты отправьте PUT с note_date."
+          },
+          "file_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5,
+            "example": 1
+          },
+          "file_type": {
+            "type": "string",
+            "enum": [
+              "",
+              "image",
+              "video",
+              "audio",
+              "document"
+            ],
+            "description": "Тип первого непустого файла по расширению, без учета регистра. Для смешанных вложений используется первый файл. Пустая строка означает отсутствие файлов. image: jpg/jpeg/png/heic/webp/gif/bmp; video: mp4/mov/avi/mkv/webm/m4v; audio: m4a/mp3/wav/aac/ogg/flac; остальные — document. Каталог изображений в существующих URL остается photo/."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Момент создания записи на сервере. Не используйте для привязки к дню календаря. При PUT не изменяется."
+          }
+        },
+        "description": "Метаданные для календаря. Поля userId и note_files отсутствуют.",
+        "example": {
+          "id": "550e8400-e29b-41d4-a716-446655440000",
+          "note_type": "Заметка на 15.10.2036",
+          "note_date": "2036-10-15",
+          "note_date_source": "selected",
+          "file_count": 1,
+          "file_type": "image",
+          "createdAt": "2026-10-17T09:00:00Z"
+        }
+      },
+      "LegacyNote": {
+        "type": "object",
+        "required": [
+          "id",
+          "userId",
+          "note_type",
+          "note_files",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "note_type": {
+            "type": "string",
+            "minLength": 1,
+            "example": "Заметка на 15.10.2036"
+          },
+          "note_files": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "URL файлов в порядке загрузки. Файлы скачиваются отдельно только при открытии нужной заметки/дня. Без файлов возвращается []."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Момент создания записи на сервере. Не используйте для привязки к дню календаря. При PUT не изменяется."
+          }
+        },
+        "description": "Прежняя структура заметки для GET /auth/notes без параметров. Дату календаря этим ответом синхронизировать нельзя.",
+        "example": {
+          "id": "550e8400-e29b-41d4-a716-446655440000",
+          "userId": "550e8400-e29b-41d4-a716-446655440099",
+          "note_type": "Заметка на 15.10.2036",
+          "note_files": [
+            "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
+          ],
+          "createdAt": "2026-10-17T09:00:00Z"
+        }
+      },
+      "NoteError": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string",
+            "example": "not found"
+          }
+        }
+      },
+      "NotesByDateResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "total"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Note"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "description": "Все заметки выбранного дня. Пагинация не применяется.",
+        "example": {
+          "data": [
+            {
+              "id": "550e8400-e29b-41d4-a716-446655440000",
+              "note_type": "Заметка на 15.10.2036",
+              "note_date": "2036-10-15",
+              "note_date_source": "selected",
+              "file_count": 1,
+              "file_type": "image",
+              "createdAt": "2026-10-17T09:00:00Z",
+              "userId": "550e8400-e29b-41d4-a716-446655440099",
+              "note_files": [
+                "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
+              ]
+            }
+          ],
+          "total": 1
+        }
+      },
+      "NotesPageResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "total",
+          "page",
+          "limit",
+          "has_more"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Note"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Общее число заметок пользователя за весь диапазон, до пагинации."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Если true, запросите следующую страницу с тем же диапазоном и fields."
+          }
+        },
+        "example": {
+          "data": [
+            {
+              "id": "550e8400-e29b-41d4-a716-446655440000",
+              "note_type": "Заметка на 15.10.2036",
+              "note_date": "2036-10-15",
+              "note_date_source": "selected",
+              "file_count": 1,
+              "file_type": "image",
+              "createdAt": "2026-10-17T09:00:00Z",
+              "userId": "550e8400-e29b-41d4-a716-446655440099",
+              "note_files": [
+                "https://api.timeleak.kz/api/v1/note-files/photo/550e8400-e29b-41d4-a716-446655440088.jpg"
+              ]
+            }
+          ],
+          "total": 1,
+          "page": 1,
+          "limit": 100,
+          "has_more": false
+        }
+      },
+      "NotesMetadataPageResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "total",
+          "page",
+          "limit",
+          "has_more"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NoteMetadata"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Общее число заметок пользователя за весь диапазон, до пагинации."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Если true, запросите следующую страницу с тем же диапазоном и fields."
+          }
+        },
+        "example": {
+          "data": [
+            {
+              "id": "550e8400-e29b-41d4-a716-446655440000",
+              "note_type": "Заметка на 15.10.2036",
+              "note_date": "2036-10-15",
+              "note_date_source": "selected",
+              "file_count": 1,
+              "file_type": "image",
+              "createdAt": "2026-10-17T09:00:00Z"
+            }
+          ],
+          "total": 1,
+          "page": 1,
+          "limit": 100,
+          "has_more": false
+        }
+      },
+      "AuthNoteCreateJSON": {
+        "type": "object",
+        "required": [
+          "note_type"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "note_type": {
+            "type": "string",
+            "minLength": 1,
+            "example": "Заметка на 15.10.2036"
+          },
+          "note_date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "example": "2036-10-15",
+            "description": "Выбранный пользователем день календаря, YYYY-MM-DD (годы 0001..9999). Это дата без времени и часового пояса. Во Flutter форматируйте выбранный день напрямую; не преобразовывайте его через toUtc(). null трактуется как отсутствие поля.",
+            "nullable": true
+          }
+        }
+      },
+      "LegacyNoteCreateJSON": {
+        "type": "object",
+        "required": [
+          "userId",
+          "note_type"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "note_type": {
+            "type": "string",
+            "minLength": 1,
+            "example": "Заметка на 15.10.2036"
+          },
+          "note_date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "example": "2036-10-15",
+            "description": "Выбранный пользователем день календаря, YYYY-MM-DD (годы 0001..9999). Это дата без времени и часового пояса. Во Flutter форматируйте выбранный день напрямую; не преобразовывайте его через toUtc(). null трактуется как отсутствие поля.",
+            "nullable": true
+          }
+        }
+      },
+      "NoteUpdateJSON": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "note_type": {
+            "type": "string",
+            "minLength": 1,
+            "example": "Заметка на 15.10.2036",
+            "nullable": true
+          },
+          "note_date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "example": "2036-10-15",
+            "description": "Выбранный пользователем день календаря, YYYY-MM-DD (годы 0001..9999). Это дата без времени и часового пояса. Во Flutter форматируйте выбранный день напрямую; не преобразовывайте его через toUtc(). null трактуется как отсутствие поля.",
+            "nullable": true
+          }
+        }
+      },
+      "AdminLoginRequest": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "username": {
+            "type": "string",
+            "example": "Admin"
+          },
+          "password": {
+            "type": "string",
+            "example": "QRT123"
+          }
+        }
+      },
+      "AdminLoginResponse": {
+        "type": "object",
+        "properties": {
+          "access_token": {
+            "type": "string"
+          },
+          "refresh_token": {
+            "type": "string"
+          },
+          "expires_in_seconds": {
+            "type": "integer",
+            "example": 60
+          }
+        }
+      },
+      "TestingAccessTokenRequest": {
+        "type": "object",
+        "required": [
+          "phone"
+        ],
+        "properties": {
+          "phone": {
+            "type": "string",
+            "example": "+77015556677"
+          }
+        }
+      },
+      "TestingAccessTokenResponse": {
+        "type": "object",
+        "properties": {
+          "access_token": {
+            "type": "string"
+          },
+          "token_type": {
+            "type": "string",
+            "example": "Bearer"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "phone": {
+            "type": "string",
+            "example": "+77015556677"
+          },
+          "auth_type": {
+            "type": "string",
+            "example": "testing_phone_forever"
+          }
+        }
+      },
+      "CreateAdRequest": {
+        "type": "object",
+        "required": [
+          "title",
+          "image_url",
+          "target_url"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "example": "Try premium"
+          },
+          "image_url": {
+            "type": "string",
+            "example": "https://cdn.example.com/ad.png"
+          },
+          "target_url": {
+            "type": "string",
+            "example": "https://example.com/promo"
+          },
+          "is_active": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "UpdateAdRequest": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "image_url": {
+            "type": "string"
+          },
+          "target_url": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Ad": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "image_url": {
+            "type": "string"
+          },
+          "target_url": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AdsListResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ad"
+            }
+          },
+          "total": {
+            "type": "integer"
+          }
+        }
+      },
+      "DeleteUserRequest": {
+        "type": "object",
+        "required": [
+          "user_id"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          }
+        }
+      },
+      "DeleteUserResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "deactivated"
+          }
+        }
+      },
+      "OTPError": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "example": {
+          "error": "email otp verification failed"
+        }
+      },
+      "EmailOTPRequestInput": {
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254,
+            "example": "user@example.com",
+            "description": "Один обычный email-адрес. Пробелы по краям удаляются, регистр приводится к нижнему. Имя вида Name <email>, списки адресов и переводы строк не принимаются."
+          }
+        },
+        "example": {
+          "email": "user@example.com"
+        }
+      },
+      "EmailOTPRequestResponse": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "expires_in_seconds",
+          "email",
+          "resend_after_seconds"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "expires_in_seconds": {
+            "type": "integer",
+            "minimum": 180,
+            "maximum": 300,
+            "description": "Срок действия кода в секундах. Задаётся OTP_EXPIRES_IN_SEC, по умолчанию 300."
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254,
+            "example": "user@example.com",
+            "description": "Один обычный email-адрес. Пробелы по краям удаляются, регистр приводится к нижнему. Имя вида Name <email>, списки адресов и переводы строк не принимаются."
+          },
+          "resend_after_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Пауза до следующей отправки. Берите значение из ответа для таймера; по умолчанию 32 секунды."
+          }
+        },
+        "example": {
+          "request_id": "550e8400-e29b-41d4-a716-446655440000",
+          "expires_in_seconds": 300,
+          "email": "user@example.com",
+          "resend_after_seconds": 32
+        }
+      },
+      "EmailOTPVerifyInput": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "code"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^[0-9]{4}$",
+            "minLength": 4,
+            "maxLength": 4,
+            "example": "0123",
+            "description": "Четыре цифры из письма. Передавайте строкой: начальный ноль должен сохраниться."
+          }
+        },
+        "example": {
+          "request_id": "550e8400-e29b-41d4-a716-446655440000",
+          "code": "0123"
+        }
+      },
+      "EmailOTPVerifyResponse": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "email",
+          "verified"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254,
+            "example": "user@example.com",
+            "description": "Один обычный email-адрес. Пробелы по краям удаляются, регистр приводится к нижнему. Имя вида Name <email>, списки адресов и переводы строк не принимаются."
+          },
+          "verified": {
+            "type": "boolean",
+            "enum": [
+              true
+            ],
+            "description": "true означает, что код верный и этот email подтверждён для указанного запроса."
+          }
+        },
+        "example": {
+          "request_id": "550e8400-e29b-41d4-a716-446655440000",
+          "email": "user@example.com",
+          "verified": true
+        }
+      },
+      "EmailOTPRateError": {
+        "type": "object",
+        "required": [
+          "error",
+          "retry_after_seconds"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "retry_after_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Через сколько секунд можно повторить действие. Такое же значение передаётся в заголовке Retry-After."
+          }
+        },
+        "example": {
+          "error": "email otp request is too frequent",
+          "retry_after_seconds": 32
+        }
+      }
+    }
+  }
+}

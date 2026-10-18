@@ -1,0 +1,1 @@
+ALTER TABLE notes ADD COLUMN note_date TEXT NOT NULL DEFAULT '';

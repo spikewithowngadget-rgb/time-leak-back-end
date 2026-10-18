@@ -18,6 +18,7 @@ type Handler struct {
 	app       service.IUserNotesService
 	jwt       service.IJWTService
 	otp       service.IOTPService
+	emailOTP  service.IEmailOTPService
 	ads       service.IAdsService
 	admin     service.IAdminAuthService
 	analytics service.IAnalyticsService
@@ -33,6 +34,7 @@ func New(services *service.Services, cfg *config.Config, log *zap.Logger) *Handl
 		app:       services.App,
 		jwt:       services.JWT,
 		otp:       services.OTP,
+		emailOTP:  services.EmailOTP,
 		ads:       services.Ads,
 		admin:     services.Admin,
 		analytics: services.Analytics,
@@ -48,6 +50,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("POST /api/v1/auth/otp/request", h.AuthOTPRequest)
 	mux.HandleFunc("POST /api/v1/auth/otp/verify", h.AuthOTPVerify)
+	mux.HandleFunc("POST /api/v1/auth/email-otp/request", h.AuthEmailOTPRequest)
+	mux.HandleFunc("POST /api/v1/auth/email-otp/verify", h.AuthEmailOTPVerify)
 	mux.HandleFunc("POST /api/v1/auth/register", h.AuthRegisterComplete)
 	mux.HandleFunc("POST /api/v1/auth/login", h.AuthLogin)
 	mux.HandleFunc("POST /api/v1/auth/password-reset/otp/request", h.AuthPasswordResetOTPRequest)
@@ -57,6 +61,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/auth/me", h.AuthMe)
 	mux.HandleFunc("POST /api/v1/auth/notes", h.AuthCreateNote)
 	mux.HandleFunc("GET /api/v1/auth/notes", h.AuthListNotes)
+	mux.HandleFunc("GET /api/v1/auth/notes/by-date", h.AuthNotesByDate)
+	mux.HandleFunc("GET /api/v1/auth/notes/{id}", h.AuthGetNote)
 	mux.HandleFunc("PUT /api/v1/auth/notes/{id}", h.AuthUpdateNote)
 	mux.HandleFunc("DELETE /api/v1/auth/notes/{id}", h.AuthDeleteNote)
 	mux.HandleFunc("GET /api/v1/note-files/{path...}", h.NoteFile)
@@ -93,12 +99,14 @@ type authRefreshReq struct {
 }
 
 type authCreateNoteReq struct {
-	NoteType string `json:"note_type"`
+	NoteType string  `json:"note_type"`
+	NoteDate *string `json:"note_date"`
 }
 
 type createNoteReq struct {
-	UserID   string `json:"userId"`
-	NoteType string `json:"note_type"`
+	UserID   string  `json:"userId"`
+	NoteType string  `json:"note_type"`
+	NoteDate *string `json:"note_date"`
 }
 
 type updateLanguageReq struct {
@@ -505,7 +513,7 @@ func (h *Handler) AuthCreateNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	note, err := h.app.CreateNote(r.Context(), claims.UserUUID, payload.NoteType, savedNoteFiles)
+	note, err := h.app.CreateNote(r.Context(), claims.UserUUID, payload.NoteType, savedNoteFiles, payload.NoteDate)
 	if err != nil {
 		h.deleteStoredNoteFiles(savedNoteFiles)
 		h.writeNoteRequestError(w, err)
@@ -520,6 +528,15 @@ func (h *Handler) AuthListNotes(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	filter, legacy, err := parseNoteListQuery(r)
+	if err != nil {
+		h.writeNoteRequestError(w, err)
+		return
+	}
+	if !legacy {
+		h.listNotesInRange(w, r, claims.UserUUID, filter)
+		return
+	}
 
 	notes, err := h.app.ListNotes(r.Context(), claims.UserUUID)
 	if err != nil {
@@ -528,7 +545,7 @@ func (h *Handler) AuthListNotes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"data":  h.noteListResponse(r, notes),
+		"data":  h.legacyNoteListResponse(r, notes),
 		"total": len(notes),
 	})
 }
@@ -592,7 +609,7 @@ func (h *Handler) CreateNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	note, err := h.app.CreateNote(r.Context(), payload.UserID, payload.NoteType, savedNoteFiles)
+	note, err := h.app.CreateNote(r.Context(), payload.UserID, payload.NoteType, savedNoteFiles, payload.NoteDate)
 	if err != nil {
 		h.deleteStoredNoteFiles(savedNoteFiles)
 		h.writeNoteRequestError(w, err)

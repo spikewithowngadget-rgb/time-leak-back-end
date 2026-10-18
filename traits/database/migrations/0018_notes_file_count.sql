@@ -1,0 +1,1 @@
+ALTER TABLE notes ADD COLUMN file_count INTEGER NOT NULL DEFAULT 0 CHECK (file_count >= 0);

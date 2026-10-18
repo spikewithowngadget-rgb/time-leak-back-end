@@ -33,17 +33,22 @@ type User struct {
 }
 
 type Note struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"userId"`
-	NoteType  string    `json:"note_type"`
-	NoteFiles []string  `json:"note_files"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID             string    `json:"id"`
+	UserID         string    `json:"userId"`
+	NoteType       string    `json:"note_type"`
+	NoteFiles      []string  `json:"note_files"`
+	NoteDate       string    `json:"note_date"`
+	NoteDateSource string    `json:"note_date_source"`
+	FileCount      int       `json:"file_count"`
+	FileType       string    `json:"file_type"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
 
 type OTPChannel string
 
 const (
 	OTPChannelWhatsApp OTPChannel = "whatsapp"
+	OTPChannelEmail    OTPChannel = "email"
 )
 
 type OTPRequest struct {

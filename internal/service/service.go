@@ -13,11 +13,13 @@ type IUserNotesService interface {
 	GetUser(ctx context.Context, userID string) (domain.User, error)
 	GetUserByPhone(ctx context.Context, phone string) (domain.User, error)
 	UpdateUserLanguage(ctx context.Context, userID, userLanguage string) error
-	CreateNote(ctx context.Context, userID, noteType string, noteFiles []string) (domain.Note, error)
+	CreateNote(ctx context.Context, userID, noteType string, noteFiles []string, noteDate *string) (domain.Note, error)
 	GetNote(ctx context.Context, noteID, userID string) (domain.Note, error)
-	UpdateNote(ctx context.Context, noteID, userID, noteType string, noteFiles []string) (domain.Note, error)
+	UpdateNote(ctx context.Context, noteID, userID, noteType string, noteFiles []string, noteDate *string) (domain.Note, error)
 	DeleteNote(ctx context.Context, noteID, userID string) error
 	ListNotes(ctx context.Context, userID string) ([]domain.Note, error)
+	ListNotesInRange(ctx context.Context, userID string, filter domain.NoteListFilter) ([]domain.Note, int, error)
+	ListNotesByDate(ctx context.Context, userID, date string) ([]domain.Note, error)
 	CreateAuthVerification(
 		ctx context.Context,
 		purpose domain.AuthVerificationPurpose,
@@ -84,6 +86,11 @@ type IOTPService interface {
 	GetLatestTestingOTP(ctx context.Context, channel domain.OTPChannel, destination string) (domain.OTPTestingCode, error)
 }
 
+type IEmailOTPService interface {
+	Request(ctx context.Context, email string) (domain.EmailOTPRequestResult, error)
+	Verify(ctx context.Context, requestID, code string) (domain.EmailOTPVerifyResult, error)
+}
+
 type IAdsService interface {
 	CreateAd(ctx context.Context, in domain.AdCreateInput) (domain.Ad, error)
 	UpdateAd(ctx context.Context, id string, in domain.AdUpdateInput) (domain.Ad, error)
@@ -106,6 +113,7 @@ type Services struct {
 	App       IUserNotesService
 	JWT       IJWTService
 	OTP       IOTPService
+	EmailOTP  IEmailOTPService
 	Ads       IAdsService
 	Admin     IAdminAuthService
 	Analytics IAnalyticsService
@@ -129,6 +137,7 @@ func NewServices(
 	appService := NewAppService(repositories.Auth, appConfig.OTP.ExpiresIn, log)
 	jwtService := NewAuthService(appConfig.JWT, repositories.Auth, log)
 	otpService := NewOTPService(repositories.Auth, otpCfg, log, NewWhapiSender(appConfig.Whapi, appConfig.OTP.ExpiresIn, log))
+	emailOTPService := NewEmailOTPService(repositories.Auth, otpCfg, appConfig.EmailOTP, log, NewResendSender(appConfig.Resend, appConfig.OTP.ExpiresIn, log))
 	adsService := NewAdsService(repositories.Auth, log)
 	adminService := NewAdminAuthService(appConfig.Admin, jwtService, log)
 	analyticsService := NewAnalyticsService(repositories.Auth, log)
@@ -137,6 +146,7 @@ func NewServices(
 		App:       appService,
 		JWT:       jwtService,
 		OTP:       otpService,
+		EmailOTP:  emailOTPService,
 		Ads:       adsService,
 		Admin:     adminService,
 		Analytics: analyticsService,

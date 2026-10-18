@@ -30,12 +30,23 @@ var errTooManyMultipartNoteFiles = errors.New("too many note files")
 type noteMutationPayload struct {
 	NoteType         string
 	NoteTypeProvided bool
+	NoteDate         *string
 	UserID           string
 	Files            []*multipart.FileHeader
 }
 
 type updateNoteReq struct {
 	NoteType *string `json:"note_type"`
+	NoteDate *string `json:"note_date"`
+}
+
+var errInvalidNotePayload = errors.New("invalid note payload")
+
+func decodeNoteJSONBody(r *http.Request, out any) error {
+	if err := decodeJSONBody(r, out); err != nil {
+		return errors.Join(errInvalidNotePayload, err)
+	}
+	return nil
 }
 
 func parseAuthCreateNotePayload(r *http.Request) (noteMutationPayload, error) {
@@ -44,13 +55,14 @@ func parseAuthCreateNotePayload(r *http.Request) (noteMutationPayload, error) {
 	}
 
 	var req authCreateNoteReq
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeNoteJSONBody(r, &req); err != nil {
 		return noteMutationPayload{}, err
 	}
 
 	return noteMutationPayload{
 		NoteType:         strings.TrimSpace(req.NoteType),
 		NoteTypeProvided: true,
+		NoteDate:         req.NoteDate,
 	}, nil
 }
 
@@ -60,7 +72,7 @@ func parseLegacyCreateNotePayload(r *http.Request) (noteMutationPayload, error) 
 	}
 
 	var req createNoteReq
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeNoteJSONBody(r, &req); err != nil {
 		return noteMutationPayload{}, err
 	}
 
@@ -68,6 +80,7 @@ func parseLegacyCreateNotePayload(r *http.Request) (noteMutationPayload, error) 
 		UserID:           strings.TrimSpace(req.UserID),
 		NoteType:         strings.TrimSpace(req.NoteType),
 		NoteTypeProvided: true,
+		NoteDate:         req.NoteDate,
 	}, nil
 }
 
@@ -77,11 +90,11 @@ func parseNoteUpdatePayload(r *http.Request) (noteMutationPayload, error) {
 	}
 
 	var req updateNoteReq
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeNoteJSONBody(r, &req); err != nil {
 		return noteMutationPayload{}, err
 	}
 
-	payload := noteMutationPayload{}
+	payload := noteMutationPayload{NoteDate: req.NoteDate}
 	if req.NoteType != nil {
 		payload.NoteTypeProvided = true
 		payload.NoteType = strings.TrimSpace(*req.NoteType)
@@ -92,19 +105,29 @@ func parseNoteUpdatePayload(r *http.Request) (noteMutationPayload, error) {
 
 func parseMultipartNotePayload(r *http.Request, requireUserID bool) (noteMutationPayload, error) {
 	if err := r.ParseMultipartForm(maxNoteMultipartMemory); err != nil {
-		return noteMutationPayload{}, err
+		cleanupMultipartForm(r)
+		return noteMutationPayload{}, errors.Join(errInvalidNotePayload, err)
 	}
 
 	payload := noteMutationPayload{
 		Files: r.MultipartForm.File[noteFilesFormField],
 	}
 	if len(payload.Files) > maxNoteFiles {
+		cleanupMultipartForm(r)
 		return noteMutationPayload{}, errTooManyMultipartNoteFiles
 	}
 
 	if _, ok := r.MultipartForm.Value["note_type"]; ok {
 		payload.NoteTypeProvided = true
 		payload.NoteType = strings.TrimSpace(r.FormValue("note_type"))
+	}
+	if values, ok := r.MultipartForm.Value["note_date"]; ok {
+		if len(values) != 1 {
+			cleanupMultipartForm(r)
+			return noteMutationPayload{}, errInvalidNotePayload
+		}
+		date := values[0]
+		payload.NoteDate = &date
 	}
 	if requireUserID {
 		payload.UserID = strings.TrimSpace(r.FormValue("userId"))

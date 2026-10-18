@@ -91,7 +91,7 @@ func (h *Handler) updateNote(w http.ResponseWriter, r *http.Request, noteID, use
 		}
 	}
 
-	updated, err := h.app.UpdateNote(r.Context(), noteID, userID, noteType, noteFiles)
+	updated, err := h.app.UpdateNote(r.Context(), noteID, userID, noteType, noteFiles, payload.NoteDate)
 	if err != nil {
 		if replaceFiles {
 			h.deleteStoredNoteFiles(noteFiles)
@@ -129,9 +129,12 @@ func (h *Handler) writeNoteRequestError(w http.ResponseWriter, err error) {
 		return
 	case errors.Is(err, sql.ErrNoRows):
 		writeErrorJSON(w, http.StatusNotFound, "not found")
+	case errors.Is(err, service.ErrInvalidNoteDate), errors.Is(err, service.ErrInvalidNoteFilter):
+		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, service.ErrNoteTypeRequired),
 		errors.Is(err, service.ErrTooManyNoteFiles),
 		errors.Is(err, errTooManyMultipartNoteFiles),
+		errors.Is(err, errInvalidNotePayload),
 		isNoteBadRequestError(err):
 		writeErrorJSON(w, http.StatusBadRequest, "bad request")
 	case strings.Contains(strings.ToLower(err.Error()), "foreign key"):
