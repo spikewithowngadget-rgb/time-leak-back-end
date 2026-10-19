@@ -1,0 +1,35 @@
+# Caddyfile
+timeleak.kz {
+	# Enable automatic HTTPS with your email for Let's Encrypt
+	tls erkinbekly@gmail.com
+
+	@sharing path /.well-known/apple-app-site-association /.well-known/assetlinks.json /share/* /s/* /api/v1/notes/shared/*
+	reverse_proxy @sharing localhost:8081
+
+	# Admin site
+	reverse_proxy localhost:8080
+
+	# Enable compression
+	encode gzip
+
+	# Log requests
+	log {
+		output file /var/lib/caddy/logs/timeleak.kz.log
+	}
+}
+
+api.timeleak.kz {
+	# Enable automatic HTTPS with your email for Let's Encrypt
+	tls erkinbekly@gmail.com
+
+	# Reverse proxy to your app on port 8081
+	reverse_proxy localhost:8081
+
+	# Enable compression
+	encode gzip
+
+	# Log requests
+	log {
+		output file /var/lib/caddy/logs/api.timeleak.kz.log
+	}
+}

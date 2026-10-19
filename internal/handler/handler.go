@@ -49,6 +49,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", h.Health)
 	mux.HandleFunc("GET /swagger", h.SwaggerUI)
 	mux.HandleFunc("GET /swagger.json", h.SwaggerJSON)
+	mux.HandleFunc("GET /.well-known/apple-app-site-association", h.AppleAppSiteAssociation)
+	mux.HandleFunc("GET /.well-known/assetlinks.json", h.AndroidAssetLinks)
 
 	mux.HandleFunc("POST /api/v1/auth/otp/request", h.AuthOTPRequest)
 	mux.HandleFunc("POST /api/v1/auth/otp/verify", h.AuthOTPVerify)
@@ -73,6 +75,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/notes/shared/{token}/files/{asset}", h.SharedNoteFile)
 	mux.HandleFunc("GET /api/v1/notes/shared/{token}/preview", h.SharedNotePreview)
 	mux.HandleFunc("GET /s/{token}", h.SharedNotePage)
+	mux.HandleFunc("GET /share/{token}", h.SharedNotePage)
 	mux.HandleFunc("GET /api/v1/note-files/{path...}", h.NoteFile)
 
 	mux.HandleFunc("GET /api/v1/me", h.Me)

@@ -163,7 +163,7 @@ func TestNoteFeaturesSharingExpiryPermissionsAndSignedFiles(t *testing.T) {
 		Expires time.Time `json:"expires_at"`
 	}
 	decodeJSON(t, resp, &share)
-	if len(share.Token) != 12 || !strings.HasSuffix(share.URL, "/s/"+share.Token) || time.Until(share.Expires) < 167*time.Hour {
+	if len(share.Token) != 12 || !strings.HasSuffix(share.URL, "/share/"+share.Token) || time.Until(share.Expires) < 167*time.Hour {
 		t.Fatalf("bad share: %+v", share)
 	}
 	resp = doReq(t, f.srv.URL, http.MethodGet, "/api/v1/notes/shared/"+share.Token, nil)
@@ -207,7 +207,7 @@ func TestNoteFeaturesSharingExpiryPermissionsAndSignedFiles(t *testing.T) {
 	if _, err := f.db.Exec(`UPDATE share_tokens SET expires_at='2000-01-01T00:00:00Z' WHERE token=?`, share.Token); err != nil {
 		t.Fatal(err)
 	}
-	for _, endpoint := range []string{"/s/" + share.Token, "/api/v1/notes/shared/" + share.Token} {
+	for _, endpoint := range []string{"/s/" + share.Token, "/share/" + share.Token, "/api/v1/notes/shared/" + share.Token} {
 		resp = doReq(t, f.srv.URL, http.MethodGet, endpoint, nil)
 		requireNoteStatus(t, resp, 410)
 		resp.Body.Close()

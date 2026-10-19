@@ -50,7 +50,7 @@ func (h *Handler) AuthShareNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusCreated, map[string]any{"share_url": h.publicBaseURL(r) + "/s/" + share.Token,
+	writeJSON(w, http.StatusCreated, map[string]any{"share_url": h.publicBaseURL(r) + "/share/" + share.Token,
 		"share_token": share.Token, "expires_at": share.ExpiresAt})
 }
 
@@ -196,8 +196,18 @@ var sharedPage = template.Must(template.New("share").Parse(`<!doctype html>
 <style>body{font:18px system-ui;background:#f3f5fa;color:#1d2740;margin:0;padding:48px 20px}main{max-width:560px;margin:auto;background:white;padding:32px;border-radius:24px}img{width:100%;border-radius:16px}a{display:inline-block;margin:12px 8px 0 0;padding:12px 18px;background:#334fcb;color:white;border-radius:12px;text-decoration:none}</style>
 </head><body><main><p>TimeLeak</p><img src="{{.Image}}" alt="Превью заметки"><h1>{{.Title}}</h1><p>Заметка на {{.Date}}</p>
 <a id="open-app" href="{{.DeepLink}}">Открыть в TimeLeak</a>
-<p>Сохраните заметку в приложении после просмотра.</p></main>
-<script>const deepLink={{.DeepLink}};if(/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)){location.href=deepLink}</script>
+<p>Сохраните заметку в приложении после просмотра.</p>
+<p>Установите TimeLeak, затем откройте эту ссылку ещё раз.</p>
+<a href="{{.AppStoreURL}}">App Store</a><a href="{{.PlayStoreURL}}">Google Play</a></main>
+<script>
+const appStoreURL={{.AppStoreURL}},playStoreURL={{.PlayStoreURL}};
+const userAgent=navigator.userAgent||"";
+if(!/bot|crawler|spider|preview/i.test(userAgent)){
+  const isIOS=/iPhone|iPad|iPod/i.test(userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
+  const storeURL=/Android/i.test(userAgent)?playStoreURL:(isIOS?appStoreURL:"");
+  if(storeURL){location.replace(storeURL)}
+}
+</script>
 </body></html>`))
 
 func (h *Handler) SharedNotePage(w http.ResponseWriter, r *http.Request) {
@@ -208,11 +218,14 @@ func (h *Handler) SharedNotePage(w http.ResponseWriter, r *http.Request) {
 	}
 	// The URI contains only a fixed scheme and a validated server-issued token.
 	data := struct {
-		Title, Date, Image, URL string
-		DeepLink                template.URL
+		Title, Date, Image, URL   string
+		AppStoreURL, PlayStoreURL string
+		DeepLink                  template.URL
 	}{
-		note.Title, note.NoteDate, h.signedShareURL(r, share, "preview"), h.publicBaseURL(r) + "/s/" + share.Token,
-		template.URL("timeleak://note/" + share.Token),
+		Title: note.Title, Date: note.NoteDate, Image: h.signedShareURL(r, share, "preview"),
+		URL:         h.publicBaseURL(r) + "/share/" + share.Token,
+		AppStoreURL: h.cfg.Sharing.AppStoreURL(), PlayStoreURL: h.cfg.Sharing.PlayStoreURL(),
+		DeepLink: template.URL("timeleak://note/" + share.Token),
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")

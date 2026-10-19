@@ -42,6 +42,14 @@ Audio titles require `ffmpeg` and `ffprobe` on the server PATH (Ubuntu/Debian:
 existing uploads continue to work without them; audio-title uploads return 503
 if the tools are unavailable. Executable paths can be configured below.
 
+Share links use `https://timeleak.kz/share/{token}`. The public domain must route
+`/share/*`, the legacy `/s/*`, `/api/v1/notes/shared/*` (including signed files
+and previews), and both app association files to this backend. Other routes
+can continue serving the admin site. The production Caddy configuration is in
+`deploy/Caddyfile`; install it as `/etc/caddy/Caddyfile`, validate with
+`caddy validate --config /etc/caddy/Caddyfile`, and reload Caddy. Restart the
+backend after changing `.env`.
+
 Environment overrides:
 
 - `APP_ADDR` (default `:8081`)
@@ -49,6 +57,10 @@ Environment overrides:
 - `DB_NAME` (default `timeleak.db`)
 - `NOTE_FILES_PATH` (default `./note_files`)
 - `PUBLIC_BASE_URL` (default `https://timeleak.kz`; public share pages and signed file URLs; reverse proxy this domain to the backend)
+- `APPLE_APP_ID` (default `9YQXS629VS.kz.timeleak.project.app`; app ID prefix + bundle ID for Universal Links)
+- `APPLE_APP_STORE_ID` (default `6762095094`; numeric App Store ID for the iOS fallback)
+- `ANDROID_PACKAGE_NAME` (default `kz.timeleak.project.app`; App Links and Google Play fallback)
+- `ANDROID_SHA256_CERT_FINGERPRINTS` (comma-separated SHA256 signing certificate fingerprints; required to serve Android associations)
 - `SHARE_SIGNING_SECRET` (optional separate HMAC secret; falls back to `JWT_ACCESS_SECRET`)
 - `NOTE_FFMPEG_PATH` / `NOTE_FFPROBE_PATH` (default `ffmpeg` / `ffprobe`)
 - `JWT_ACCESS_SECRET`

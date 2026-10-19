@@ -395,7 +395,7 @@ func TestEmailOTP_SwaggerDocumentsBothChannelsInRussian(t *testing.T) {
 	if err := json.Unmarshal([]byte(swaggerSpec), &spec); err != nil {
 		t.Fatal(err)
 	}
-	if spec.Info.Version != "1.3.0" {
+	if spec.Info.Version != "1.4.0" {
 		t.Fatal("OTP Swagger version was not updated")
 	}
 	for _, path := range []string{"/api/v1/auth/otp/request", "/api/v1/auth/otp/verify", "/api/v1/auth/email-otp/request", "/api/v1/auth/email-otp/verify"} {

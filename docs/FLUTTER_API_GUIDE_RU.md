@@ -1,6 +1,6 @@
 # Time Leak API: изменения и руководство для Flutter
 
-Документ описывает фактическое поведение текущего бэкенда `time-leak-back-end`, включая рефакторинг заметок и добавление email OTP через Resend. Версия OpenAPI: **1.3.0**.
+Документ описывает фактическое поведение текущего бэкенда `time-leak-back-end`, включая рефакторинг заметок и добавление email OTP через Resend. Версия OpenAPI: **1.4.0**.
 
 **Основной адрес:** `https://api.timeleak.kz`  
 **Swagger UI:** <https://api.timeleak.kz/swagger>  
@@ -175,7 +175,10 @@ Email OTP при ограничении частоты:
 | GET | `/api/v1/notes/shared/{token}` | Нет | Публичная заметка и временные URL для импорта |
 | GET | `/api/v1/notes/shared/{token}/files/{asset}` | Signed URL | Основной файл или title-audio |
 | GET | `/api/v1/notes/shared/{token}/preview` | Signed URL | PNG-превью для мессенджеров |
-| GET | `/s/{token}` | Нет | HTML-превью share-ссылки |
+| GET | `/share/{token}` | Нет | HTML-превью; iOS → App Store, Android → Google Play |
+| GET | `/s/{token}` | Нет | Совместимый маршрут для старых share-ссылок |
+| GET | `/.well-known/apple-app-site-association` | Нет | iOS Universal Links (основной домен) |
+| GET | `/.well-known/assetlinks.json` | Нет | Android App Links (основной домен) |
 | POST | `/api/v1/notes` | Нет | Старое создание с `userId` в теле |
 | GET | `/api/v1/ads/next` | User | Следующая активная реклама |
 
@@ -1396,7 +1399,7 @@ Query: `limit` (20, максимум 100), `offset` (0), `from`, `to`. Здес�
 }
 ```
 
-`GET /swagger` → HTML Swagger UI. `GET /swagger.json` → документ OpenAPI 3.0.3 версии 1.2.0. Это не методы получения данных пользователя.
+`GET /swagger` → HTML Swagger UI. `GET /swagger.json` → документ OpenAPI 3.0.3 версии 1.4.0. Это не методы получения данных пользователя.
 
 ### 12.2. Последний тестовый WhatsApp-код
 
@@ -1481,7 +1484,7 @@ Email-коды через этот метод не выдаются. Произ�
 
 ## 14. Сверка со Swagger
 
-OpenAPI 1.3.0 описывает все зарегистрированные маршруты, включая прежние
+OpenAPI 1.4.0 описывает все зарегистрированные маршруты, включая прежние
 административные методы, новые share/file/preview операции, `/swagger` и
 `/swagger.json`. Для регистрации, login и сброса описаны необязательные device
 и location. Деактивация собственного аккаунта описана без тела, по user JWT.

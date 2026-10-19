@@ -1,7 +1,7 @@
 # TimeLeak: передача новых функций Flutter-разработчику
 
 Backend сохраняет `/api/v1`, авторизацию и существующие поля. Полный контракт:
-`GET /swagger.json`, интерфейс: `GET /swagger`. Версия OpenAPI — **1.3.0**.
+`GET /swagger.json`, интерфейс: `GET /swagger`. Версия OpenAPI — **1.4.0**.
 Ниже — изменения; остальные методы описаны в `FLUTTER_API_GUIDE_RU.md`.
 
 ## Поля заметки
@@ -81,9 +81,14 @@ Backend сохраняет `/api/v1`, авторизацию и существу
    `{"expires_in":168}`. Тело можно опустить; срок по умолчанию — 7 дней,
    допустимо 1–8760 часов.
 2. Ответ **201**: `share_url`, `share_token` (12 символов), `expires_at` (UTC).
+   `share_url` имеет формат `https://timeleak.kz/share/{token}`.
    Передавайте в системный share именно `share_url`.
-3. `GET /s/{token}` — публичное HTML-превью с OG-тегами. Содержит ссылку
-   `timeleak://note/{token}` и попытку открытия приложения в мобильном браузере.
+3. `GET /share/{token}` — публичное HTML-превью с OG-тегами. Установленное
+   приложение открывает HTTPS-ссылку через iOS Universal Links / Android App Links.
+   Если ссылка открылась в браузере, страница перенаправляет iOS (включая iPad)
+   в App Store, Android — в Google Play. На компьютере остаются превью и кнопки
+   обоих магазинов. Кнопка `timeleak://note/{token}` доступна для ручного открытия.
+   Старый маршрут `/s/{token}` продолжает работать.
 4. Получатель вызывает **без JWT** `GET /api/v1/notes/shared/{token}`.
    Ответ: `id` оригинала, `title`, `note_type`, `note_date`, `note_files`,
    `file_sizes` (байты в том же порядке), `title_audio_url`, `lifecycle`,
@@ -113,6 +118,31 @@ GET shared. Доступ к файлам и превью проверяет то
 | 413 | Аудио-заголовок больше 2 MiB. |
 | 503 | На backend недоступен FFmpeg/ffprobe; повторить после восстановления сервера. |
 
+## Universal Links и App Links
+
+Backend отдаёт без авторизации и редиректов, с `Content-Type: application/json`:
+
+- `https://timeleak.kz/.well-known/apple-app-site-association` —
+  `appID=9YQXS629VS.kz.timeleak.project.app`, `paths=["/share/*"]`.
+- `https://timeleak.kz/.well-known/assetlinks.json` —
+  `package_name=kz.timeleak.project.app`, SHA256 из `ANDROID_SHA256_CERT_FINGERPRINTS`.
+
+В `.env` задаются `PUBLIC_BASE_URL=https://timeleak.kz`, `APPLE_APP_ID`,
+`APPLE_APP_STORE_ID=6762095094`, `ANDROID_PACKAGE_NAME`,
+`ANDROID_SHA256_CERT_FINGERPRINTS`. Несколько SHA256 (например, при смене
+сертификата) разделяются запятыми. Для сборок из Google Play используйте SHA256
+сертификата **App signing**, которым подписана установленная сборка.
+
+На iOS добавьте Associated Domains: `applinks:timeleak.kz`; на Android —
+`intent-filter` с `autoVerify=true`, `scheme=https`, `host=timeleak.kz`,
+`pathPrefix=/share/`. Flutter должен извлекать токен из `/share/{token}` и
+запрашивать публичный shared API из шага 4. URI `timeleak://note/{token}`
+остаётся совместимым со старыми клиентами. После установки из магазина
+пользователь должен повторно открыть исходную share-ссылку.
+
+При аудите карточка Google Play для указанного package name отвечала 404;
+до Android-релиза проверьте публикацию и доступность приложения в магазине.
+
 Полный справочник схем, примеров, параметров и административных методов —
-в `/swagger.json`. UI, исправления Flutter-плеера/записи и платформенная
-настройка открытия ссылок выполняются в Flutter-проекте.
+в `/swagger.json`. UI, исправления Flutter-плеера/записи и платформенные
+настройки приложения выполняются в Flutter-проекте.
