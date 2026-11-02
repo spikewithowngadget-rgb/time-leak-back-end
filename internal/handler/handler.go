@@ -420,7 +420,7 @@ func (h *Handler) AuthPasswordResetOTPVerify(w http.ResponseWriter, r *http.Requ
 func (h *Handler) AuthPasswordResetConfirm(w http.ResponseWriter, r *http.Request) {
 	var req authResetPasswordConfirmReq
 	if err := decodeJSONBody(r, &req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "bad request")
+		h.writePasswordResetFailure(w, "invalid_payload", "bad request", http.StatusBadRequest)
 		return
 	}
 
@@ -434,17 +434,11 @@ func (h *Handler) AuthPasswordResetConfirm(w http.ResponseWriter, r *http.Reques
 		req.Location,
 		requestAuthContext(r),
 	); err != nil {
-		switch {
-		case isAuthValidationError(err), isVerificationError(err):
-			writeErrorJSON(w, http.StatusBadRequest, "password reset failed")
-		case errors.Is(err, service.ErrUserNotFound):
-			writeErrorJSON(w, http.StatusNotFound, "user not found")
-		default:
-			writeErrorJSON(w, http.StatusInternalServerError, "internal")
-		}
+		h.passwordResetError(w, err)
 		return
 	}
 
+	h.log.Info("password reset completed")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "password_updated"})
 }
 
@@ -924,7 +918,8 @@ func isAuthValidationError(err error) bool {
 		errors.Is(err, service.ErrInvalidPhoneFormat) ||
 		errors.Is(err, service.ErrPasswordRequired) ||
 		errors.Is(err, service.ErrPasswordMismatch) ||
-		errors.Is(err, service.ErrPasswordTooShort)
+		errors.Is(err, service.ErrPasswordTooShort) ||
+		errors.Is(err, service.ErrPasswordTooLong)
 }
 
 func isVerificationError(err error) bool {

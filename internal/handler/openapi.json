@@ -347,6 +347,7 @@
     "/api/v1/auth/password-reset/confirm": {
       "post": {
         "summary": "Set new password after password reset OTP verification",
+        "description": "Updates the password and consumes the reset verification token in one transaction. A database failure leaves the token available for retry until expiry. Errors include a human-readable error and a machine-readable code.",
         "requestBody": {
           "required": true,
           "content": {
@@ -359,10 +360,56 @@
         },
         "responses": {
           "200": {
-            "description": "Password updated"
+            "description": "Password updated; sign in with the new password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordResetConfirmResponse"
+                }
+              }
+            }
           },
           "400": {
-            "description": "Invalid payload or verification token"
+            "description": "Invalid phone, password, payload or verification token; inspect code for the reason",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordResetError"
+                },
+                "example": {
+                  "error": "verification token expired",
+                  "code": "verification_token_expired"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User with the verified phone number not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordResetError"
+                },
+                "example": {
+                  "error": "user not found",
+                  "code": "user_not_found"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure; see server logs. A rolled-back password update does not consume the verification token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordResetError"
+                },
+                "example": {
+                  "error": "internal",
+                  "code": "internal_error"
+                }
+              }
+            }
           }
         }
       }
@@ -4042,20 +4089,69 @@
           },
           "new_password": {
             "type": "string",
+            "description": "8 to 72 UTF-8 bytes inclusive. Limits are measured in bytes; bcrypt supports at most 72 bytes.",
             "example": "NewPass123!"
           },
           "confirm_password": {
             "type": "string",
+            "description": "Must exactly match new_password.",
             "example": "NewPass123!"
           },
           "verification_token": {
-            "type": "string"
+            "type": "string",
+            "description": "Unexpired, unused verification_token returned by password-reset/otp/verify for the same phone number. Registration and login tokens are not accepted."
           },
           "device": {
             "$ref": "#/components/schemas/AuthDevice"
           },
           "location": {
             "$ref": "#/components/schemas/AuthLocation"
+          }
+        }
+      },
+      "PasswordResetConfirmResponse": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "password_updated"
+            ]
+          }
+        }
+      },
+      "PasswordResetError": {
+        "type": "object",
+        "required": [
+          "error",
+          "code"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Human-readable reason. Internal failures return internal; technical details are logged on the server."
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "invalid_payload",
+              "phone_required",
+              "invalid_phone",
+              "password_required",
+              "password_mismatch",
+              "password_too_short",
+              "password_too_long",
+              "verification_token_missing",
+              "verification_token_not_found",
+              "verification_token_expired",
+              "verification_token_used",
+              "verification_token_invalid",
+              "user_not_found",
+              "internal_error"
+            ]
           }
         }
       },

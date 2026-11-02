@@ -21,6 +21,7 @@ var (
 	ErrPasswordRequired         = errors.New("password is required")
 	ErrPasswordMismatch         = errors.New("passwords do not match")
 	ErrPasswordTooShort         = errors.New("password must be at least 8 characters")
+	ErrPasswordTooLong          = errors.New("password must not exceed 72 bytes")
 	ErrNoteTypeRequired         = errors.New("note_type is required")
 	ErrTooManyNoteFiles         = errors.New("too many note files")
 	ErrUserAlreadyExists        = errors.New("user already exists")
@@ -327,7 +328,7 @@ func (s *AppService) ResetPasswordWithOTP(
 		return err
 	}
 
-	verification, err := s.consumeAuthVerification(ctx, verificationToken, domain.AuthVerificationPurposePasswordReset, normalizedPhone)
+	verification, err := s.getAuthVerification(ctx, verificationToken, domain.AuthVerificationPurposePasswordReset, normalizedPhone)
 	if err != nil {
 		return err
 	}
@@ -337,9 +338,12 @@ func (s *AppService) ResetPasswordWithOTP(
 		return err
 	}
 
-	if err := s.repo.UpdateUserPasswordByPhone(ctx, normalizedPhone, passwordHash); err != nil {
+	if err := s.repo.ResetPasswordWithVerification(ctx, verification.ID, normalizedPhone, passwordHash, time.Now().UTC()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrUserNotFound
+		}
+		if errors.Is(err, repository.ErrPasswordResetVerificationInvalid) {
+			return ErrVerificationInvalid
 		}
 		return fmt.Errorf("update user password: %w", err)
 	}
@@ -353,6 +357,25 @@ func (s *AppService) ResetPasswordWithOTP(
 }
 
 func (s *AppService) consumeAuthVerification(
+	ctx context.Context,
+	verificationToken string,
+	purpose domain.AuthVerificationPurpose,
+	phone string,
+) (domain.AuthVerification, error) {
+	verification, err := s.getAuthVerification(ctx, verificationToken, purpose, phone)
+	if err != nil {
+		return domain.AuthVerification{}, err
+	}
+	if err := s.repo.MarkAuthVerificationUsed(ctx, verification.ID, time.Now().UTC()); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.AuthVerification{}, ErrVerificationAlreadyUsed
+		}
+		return domain.AuthVerification{}, err
+	}
+	return verification, nil
+}
+
+func (s *AppService) getAuthVerification(
 	ctx context.Context,
 	verificationToken string,
 	purpose domain.AuthVerificationPurpose,
@@ -385,13 +408,6 @@ func (s *AppService) consumeAuthVerification(
 	}
 	if normalizePhone(verification.Phone) != phone {
 		return domain.AuthVerification{}, ErrVerificationInvalid
-	}
-
-	if err := s.repo.MarkAuthVerificationUsed(ctx, verification.ID, time.Now().UTC()); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.AuthVerification{}, ErrVerificationAlreadyUsed
-		}
-		return domain.AuthVerification{}, err
 	}
 
 	return verification, nil

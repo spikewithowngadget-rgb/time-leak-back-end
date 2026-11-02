@@ -6,7 +6,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const minPasswordLength = 8
+const (
+	minPasswordLength = 8
+	maxPasswordBytes  = 72 // bcrypt's input limit is in bytes, not characters.
+)
 
 func validatePasswordInput(password, confirmPassword string) error {
 	if password == "" || confirmPassword == "" {
@@ -18,12 +21,18 @@ func validatePasswordInput(password, confirmPassword string) error {
 	if len(password) < minPasswordLength {
 		return ErrPasswordTooShort
 	}
+	if len(password) > maxPasswordBytes {
+		return ErrPasswordTooLong
+	}
 	return nil
 }
 
 func hashPassword(password string) (string, error) {
 	if password == "" {
 		return "", ErrPasswordRequired
+	}
+	if len(password) > maxPasswordBytes {
+		return "", ErrPasswordTooLong
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {

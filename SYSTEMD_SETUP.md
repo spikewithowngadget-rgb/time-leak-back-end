@@ -72,6 +72,43 @@ sudo systemctl enable time-leak
 sudo systemctl disable time-leak
 ```
 
+## Production-сервис `server.service`
+
+В production используется юнит `server.service`; установочный шаблон этого
+репозитория создаёт `time-leak.service`. Для работающего production-процесса
+используйте его фактическое имя:
+
+```bash
+sudo systemctl status server.service --no-pager
+sudo journalctl -u server.service --since '1 hour ago' --no-pager --grep='password reset'
+sudo journalctl -u server.service -f
+```
+
+Сброс пароля пишет `password reset rejected` с причиной в поле `reason`
+(например, `verification_token_expired`), `password reset failed` при внутренней
+ошибке и `password reset completed` при успехе. Пароль и verification token
+в эти диагностические записи не включаются.
+
+`git push` сам по себе не обновляет запущенный процесс. После получения нового
+кода на сервере проверьте способ запуска и рабочий каталог:
+
+```bash
+sudo systemctl show server.service -p WorkingDirectory -p ExecStart
+```
+
+Если `ExecStart` запускает бинарный файл, пересоберите и установите его по
+указанному пути; при `go run` новый код компилируется при запуске. Затем
+перезапустите сервис и проверьте его статус:
+
+```bash
+sudo systemctl restart server.service
+sudo systemctl status server.service --no-pager
+```
+
+`daemon-reload` нужен при изменении самого unit-файла или drop-in, а не при
+обычном обновлении кода. Новые ответы reset confirm с полями `error` и `code`
+и диагностические записи появятся после запуска обновлённой версии.
+
 ## Конфигурация
 
 Параметры сервиса в файле `time-leak.service`:
