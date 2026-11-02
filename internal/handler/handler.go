@@ -72,6 +72,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/auth/notes/{id}/title-audio", h.AuthDeleteTitleAudio)
 	mux.HandleFunc("POST /api/v1/auth/notes/{id}/share", h.AuthShareNote)
 	mux.HandleFunc("GET /api/v1/notes/shared/{token}", h.SharedNote)
+	mux.HandleFunc("GET /api/v1/notes/shared/{token}/landing", h.SharedNoteLanding)
 	mux.HandleFunc("GET /api/v1/notes/shared/{token}/files/{asset}", h.SharedNoteFile)
 	mux.HandleFunc("GET /api/v1/notes/shared/{token}/preview", h.SharedNotePreview)
 	mux.HandleFunc("GET /s/{token}", h.SharedNotePage)

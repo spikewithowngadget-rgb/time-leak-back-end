@@ -32,7 +32,7 @@ func loadSharingConfig() (SharingConfig, error) {
 		FFmpegPath:    get("NOTE_FFMPEG_PATH", "ffmpeg"), FFprobePath: get("NOTE_FFPROBE_PATH", "ffprobe"),
 		AppleAppID:         get("APPLE_APP_ID", "9YQXS629VS.kz.timeleak.project.app"),
 		AppleAppStoreID:    get("APPLE_APP_STORE_ID", "6762095094"),
-		AndroidPackageName: get("ANDROID_PACKAGE_NAME", "kz.timeleak.project.app"),
+		AndroidPackageName: get("ANDROID_PACKAGE_NAME", "kz.timeleak.app"),
 	}
 	u, err := url.Parse(cfg.PublicBaseURL)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && u.Scheme != "http") {

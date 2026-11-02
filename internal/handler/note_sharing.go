@@ -190,15 +190,18 @@ func (h *Handler) writeShareError(w http.ResponseWriter, err error) {
 var sharedPage = template.Must(template.New("share").Parse(`<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.Title}} — TimeLeak</title><meta property="og:type" content="article">
-<meta property="og:title" content="{{.Title}}"><meta property="og:description" content="Заметка в TimeLeak • {{.Date}}">
-<meta property="og:image" content="{{.Image}}"><meta property="og:image:width" content="600"><meta property="og:image:height" content="315">
-<meta property="og:url" content="{{.URL}}">
+<meta property="og:title" content="{{.Title}}"><meta property="og:description" content="{{.Description}}">
+{{if .Image}}<meta property="og:image" content="{{.Image}}"><meta property="og:image:width" content="600"><meta property="og:image:height" content="315">{{end}}
+{{if .URL}}<meta property="og:url" content="{{.URL}}">{{end}}
 <style>body{font:18px system-ui;background:#f3f5fa;color:#1d2740;margin:0;padding:48px 20px}main{max-width:560px;margin:auto;background:white;padding:32px;border-radius:24px}img{width:100%;border-radius:16px}a{display:inline-block;margin:12px 8px 0 0;padding:12px 18px;background:#334fcb;color:white;border-radius:12px;text-decoration:none}</style>
-</head><body><main><p>TimeLeak</p><img src="{{.Image}}" alt="Превью заметки"><h1>{{.Title}}</h1><p>Заметка на {{.Date}}</p>
-<a id="open-app" href="{{.DeepLink}}">Открыть в TimeLeak</a>
-<p>Сохраните заметку в приложении после просмотра.</p>
+</head><body><main><p>TimeLeak</p>{{if .Image}}<img src="{{.Image}}" alt="Превью заметки">{{end}}<h1>{{.Title}}</h1>
+{{if eq .Status 200}}<p>Заметка на {{.Date}}</p>
+<a id="open-app" href="{{.DeepLink}}">Открыть в приложении</a>{{end}}
+<p>{{.Message}}</p>
+{{if eq .Status 200}}
 <p>Установите TimeLeak, затем откройте эту ссылку ещё раз.</p>
-<a href="{{.AppStoreURL}}">App Store</a><a href="{{.PlayStoreURL}}">Google Play</a></main>
+{{end}}<a href="{{.AppStoreURL}}">App Store</a><a href="{{.PlayStoreURL}}">Google Play</a></main>
+{{if eq .Status 200}}
 <script>
 const appStoreURL={{.AppStoreURL}},playStoreURL={{.PlayStoreURL}};
 const userAgent=navigator.userAgent||"";
@@ -208,28 +211,24 @@ if(!/bot|crawler|spider|preview/i.test(userAgent)){
   if(storeURL){location.replace(storeURL)}
 }
 </script>
-</body></html>`))
+{{end}}</body></html>`))
 
 func (h *Handler) SharedNotePage(w http.ResponseWriter, r *http.Request) {
-	note, share, err := h.app.GetSharedNote(r.Context(), r.PathValue("token"), true)
-	if err != nil {
-		h.writeShareError(w, err)
-		return
-	}
-	// The URI contains only a fixed scheme and a validated server-issued token.
+	page := h.sharedNoteLandingData(r)
+	// The custom scheme contains only the fixed prefix and a validated,
+	// server-issued token. Invalid shares have no deep link.
 	data := struct {
-		Title, Date, Image, URL   string
-		AppStoreURL, PlayStoreURL string
-		DeepLink                  template.URL
+		sharedNotePageData
+		DeepLink template.URL
 	}{
-		Title: note.Title, Date: note.NoteDate, Image: h.signedShareURL(r, share, "preview"),
-		URL:         h.publicBaseURL(r) + "/share/" + share.Token,
-		AppStoreURL: h.cfg.Sharing.AppStoreURL(), PlayStoreURL: h.cfg.Sharing.PlayStoreURL(),
-		DeepLink: template.URL("timeleak://note/" + share.Token),
+		sharedNotePageData: page,
+		DeepLink:           template.URL(page.DeepLink),
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(page.Status)
 	if err := sharedPage.Execute(w, data); err != nil {
 		h.log.Warn("render shared note page")
 	}

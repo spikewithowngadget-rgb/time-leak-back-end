@@ -42,13 +42,27 @@ Audio titles require `ffmpeg` and `ffprobe` on the server PATH (Ubuntu/Debian:
 existing uploads continue to work without them; audio-title uploads return 503
 if the tools are unavailable. Executable paths can be configured below.
 
-Share links use `https://timeleak.kz/share/{token}`. The public domain must route
-`/share/*`, the legacy `/s/*`, `/api/v1/notes/shared/*` (including signed files
-and previews), and both app association files to this backend. Other routes
-can continue serving the admin site. The production Caddy configuration is in
-`deploy/Caddyfile`; install it as `/etc/caddy/Caddyfile`, validate with
+Share links use `https://timeleak.kz/share/{token}`. On both public domains,
+Caddy serves `/share/*` from `/srv/timeleak-share`, independently of the API
+route. Copy `deploy/share/*` to that directory with files readable by the
+`caddy` service user. The trusted HTML template loads note-specific Open Graph
+metadata from `/api/v1/notes/shared/{token}/landing` before sending HTML to the
+browser or preview crawler. This endpoint returns base64-encoded JSON because
+Caddy's `httpInclude` evaluates included text as a template; raw user content
+must never be included as template source. HTML values are escaped after decoding.
+Invalid and expired links return human HTML pages with HTTP 404/410.
+
+Keep the legacy `/s/*`, `/api/v1/notes/shared/*` (including signed files,
+previews and landing metadata), and both association files proxied to the
+backend. The existing shared-note JSON endpoint is unchanged. Ordinary mobile
+browsers open the appropriate app store after a short delay; in-app browsers
+keep the landing visible for a manual `timeleak://share/{token}` tap. Desktop
+visitors see the note preview and both store links.
+
+Install `deploy/Caddyfile` as `/etc/caddy/Caddyfile`, validate with
 `caddy validate --config /etc/caddy/Caddyfile`, and reload Caddy. Restart the
-backend after changing `.env`.
+backend after changing `.env`. Verify the backend with `go test ./...` and the
+real Caddy template/static routing with `python3 deploy/check_share_landing.py`.
 
 Environment overrides:
 
@@ -56,11 +70,11 @@ Environment overrides:
 - `DB_PATH` (default `data`)
 - `DB_NAME` (default `timeleak.db`)
 - `NOTE_FILES_PATH` (default `./note_files`)
-- `PUBLIC_BASE_URL` (default `https://timeleak.kz`; public share pages and signed file URLs; reverse proxy this domain to the backend)
+- `PUBLIC_BASE_URL` (default `https://timeleak.kz`; canonical share pages and signed file URLs; route the shared API on this domain to the backend)
 - `APPLE_APP_ID` (default `9YQXS629VS.kz.timeleak.project.app`; app ID prefix + bundle ID for Universal Links)
 - `APPLE_APP_STORE_ID` (default `6762095094`; numeric App Store ID for the iOS fallback)
-- `ANDROID_PACKAGE_NAME` (default `kz.timeleak.project.app`; App Links and Google Play fallback)
-- `ANDROID_SHA256_CERT_FINGERPRINTS` (comma-separated SHA256 signing certificate fingerprints; required to serve Android associations)
+- `ANDROID_PACKAGE_NAME` (default `kz.timeleak.app`; the published Android application ID for App Links and Google Play fallback)
+- `ANDROID_SHA256_CERT_FINGERPRINTS` (comma-separated SHA256 signing certificate fingerprints; required to serve Android associations). Include the **App signing key certificate** SHA-256 from Google Play Console → App integrity for Play installs, plus `D2:62:FF:B6:A9:02:AC:48:EA:00:1B:B7:2A:89:A0:E3:31:8B:39:07:E8:05:92:B7:BF:F3:5C:A8:D6:DD:A0:19` for locally signed APKs. If Play uses a different certificate from the local/upload key, add its fingerprint as a separate entry; one entry is sufficient when both certificates match.
 - `SHARE_SIGNING_SECRET` (optional separate HMAC secret; falls back to `JWT_ACCESS_SECRET`)
 - `NOTE_FFMPEG_PATH` / `NOTE_FFPROBE_PATH` (default `ffmpeg` / `ffprobe`)
 - `JWT_ACCESS_SECRET`

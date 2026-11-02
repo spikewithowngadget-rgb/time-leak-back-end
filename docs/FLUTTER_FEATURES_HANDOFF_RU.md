@@ -87,7 +87,7 @@ Backend сохраняет `/api/v1`, авторизацию и существу
    приложение открывает HTTPS-ссылку через iOS Universal Links / Android App Links.
    Если ссылка открылась в браузере, страница перенаправляет iOS (включая iPad)
    в App Store, Android — в Google Play. На компьютере остаются превью и кнопки
-   обоих магазинов. Кнопка `timeleak://note/{token}` доступна для ручного открытия.
+   обоих магазинов. Кнопка `timeleak://share/{token}` доступна для ручного открытия.
    Старый маршрут `/s/{token}` продолжает работать.
 4. Получатель вызывает **без JWT** `GET /api/v1/notes/shared/{token}`.
    Ответ: `id` оригинала, `title`, `note_type`, `note_date`, `note_files`,
@@ -103,6 +103,14 @@ Backend сохраняет `/api/v1`, авторизацию и существу
 GET shared. Доступ к файлам и превью проверяет токен, подпись, срок и наличие
 оригинала. Новая share-ссылка не отзывает старую. Удаление оригинала удаляет
 все его share-токены и вложения.
+
+На `timeleak.kz` и `api.timeleak.kz` Caddy отдаёт `/share/{token}` из статического
+шаблона `deploy/share`. Динамические данные заметки для Open Graph шаблон
+получает через `GET /api/v1/notes/shared/{token}/landing`: ответ — `text/plain`,
+стандартный base64 от JSON. Этот служебный маршрут всегда возвращает HTTP 200;
+поле `Status` внутри JSON задаёт код HTML-страницы (200, 404, 410 или 503).
+Невалидные и истёкшие ссылки показывают понятную HTML-страницу. Flutter
+продолжает получать данные через обычный shared API из шага 4.
 
 ## Ошибки
 
@@ -120,28 +128,30 @@ GET shared. Доступ к файлам и превью проверяет то
 
 ## Universal Links и App Links
 
-Backend отдаёт без авторизации и редиректов, с `Content-Type: application/json`:
+Backend отдаёт без авторизации и редиректов, с `Content-Type: application/json`,
+на обоих доменах `timeleak.kz` и `api.timeleak.kz`:
 
 - `https://timeleak.kz/.well-known/apple-app-site-association` —
-  `appID=9YQXS629VS.kz.timeleak.project.app`, `paths=["/share/*"]`.
+  `appID=9YQXS629VS.kz.timeleak.project.app`,
+  `paths=["/share/*", "/api/v1/notes/shared/*"]`.
 - `https://timeleak.kz/.well-known/assetlinks.json` —
-  `package_name=kz.timeleak.project.app`, SHA256 из `ANDROID_SHA256_CERT_FINGERPRINTS`.
+  `package_name=kz.timeleak.app`, SHA256 из `ANDROID_SHA256_CERT_FINGERPRINTS`.
 
 В `.env` задаются `PUBLIC_BASE_URL=https://timeleak.kz`, `APPLE_APP_ID`,
-`APPLE_APP_STORE_ID=6762095094`, `ANDROID_PACKAGE_NAME`,
+`APPLE_APP_STORE_ID=6762095094`, `ANDROID_PACKAGE_NAME=kz.timeleak.app`,
 `ANDROID_SHA256_CERT_FINGERPRINTS`. Несколько SHA256 (например, при смене
 сертификата) разделяются запятыми. Для сборок из Google Play используйте SHA256
-сертификата **App signing**, которым подписана установленная сборка.
+сертификата **App signing**, которым подписана установленная сборка. Если он
+отличается от upload/local сертификата, добавьте его отпечаток отдельно,
+сохранив локальный для APK-тестов.
 
-На iOS добавьте Associated Domains: `applinks:timeleak.kz`; на Android —
-`intent-filter` с `autoVerify=true`, `scheme=https`, `host=timeleak.kz`,
-`pathPrefix=/share/`. Flutter должен извлекать токен из `/share/{token}` и
-запрашивать публичный shared API из шага 4. URI `timeleak://note/{token}`
-остаётся совместимым со старыми клиентами. После установки из магазина
+На iOS добавьте Associated Domains: `applinks:timeleak.kz` и
+`applinks:api.timeleak.kz`; на Android — `intent-filter` с `autoVerify=true`,
+`scheme=https` и обоими доменами для используемых путей `/share/` и
+`/api/v1/notes/shared/`. Flutter должен извлекать токен из HTTPS-ссылки или
+`timeleak://share/{token}` и запрашивать публичный shared API из шага 4.
+После установки из магазина
 пользователь должен повторно открыть исходную share-ссылку.
-
-При аудите карточка Google Play для указанного package name отвечала 404;
-до Android-релиза проверьте публикацию и доступность приложения в магазине.
 
 Полный справочник схем, примеров, параметров и административных методов —
 в `/swagger.json`. UI, исправления Flutter-плеера/записи и платформенные

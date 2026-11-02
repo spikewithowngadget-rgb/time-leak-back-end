@@ -1,0 +1,49 @@
+{{- $token := placeholder "http.regexp.share.1" -}}
+{{- $page := httpInclude (printf "/api/v1/notes/shared/%s/landing" $token) | b64dec | fromJson -}}
+{{- if ne (int $page.Status) 200 -}}{{ httpError (int $page.Status) }}{{- end -}}
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{{ html $page.Title }} — TimeLeak</title>
+  <meta name="description" content="{{ html $page.Description }}">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="TimeLeak">
+  <meta property="og:title" content="{{ html $page.Title }}">
+  <meta property="og:description" content="{{ html $page.Description }}">
+  <meta property="og:image" content="{{ html $page.Image }}">
+  <meta property="og:image:width" content="600">
+  <meta property="og:image:height" content="315">
+  <meta property="og:url" content="{{ html $page.URL }}">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="canonical" href="{{ html $page.URL }}">
+  <link rel="stylesheet" href="/share-assets/landing.css">
+  <script src="/share-assets/landing.js" defer></script>
+</head>
+<body data-status="200" data-app-store="{{ html $page.AppStoreURL }}" data-play-store="{{ html $page.PlayStoreURL }}">
+  <main class="shell">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">T</span>TimeLeak</div>
+    <article class="note-card">
+      <div class="note-content">
+        <p class="eyebrow">С вами поделились заметкой</p>
+        <h1 class="note-title">{{ html $page.Title }}</h1>
+        <p class="note-date">Заметка на <time datetime="{{ html $page.Date }}">{{ html $page.Date }}</time></p>
+      </div>
+      <img class="preview" src="{{ html $page.Image }}" width="600" height="315" alt="Превью заметки">
+      <div class="note-content">
+        <div class="actions">
+          <a class="button" id="open-app" href="{{ html $page.DeepLink }}">Открыть в приложении</a>
+          <a class="button button-secondary" id="download-app" href="{{ html $page.AppStoreURL }}">Скачать приложение</a>
+        </div>
+        <p class="hint">Откройте заметку в TimeLeak, чтобы просмотреть её и сохранить себе. После установки приложения вернитесь к этой ссылке.</p>
+        <div class="stores" aria-label="Магазины приложений">
+          <a href="{{ html $page.AppStoreURL }}">App Store</a>
+          <a href="{{ html $page.PlayStoreURL }}">Google Play</a>
+        </div>
+      </div>
+    </article>
+  </main>
+</body>
+</html>

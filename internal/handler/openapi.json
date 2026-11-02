@@ -2440,6 +2440,41 @@
         "description": "Авторизация не нужна. Не возвращает userId, email или полный телефон владельца. file_sizes позволяет запросить согласие перед загрузкой большого файла. Для сохранения скачайте файлы и создайте свою заметку через POST /api/v1/auth/notes; оригинальный id не используйте как id импортированной заметки."
       }
     },
+    "/api/v1/notes/shared/{token}/landing": {
+      "get": {
+        "tags": [
+          "Sharing"
+        ],
+        "operationId": "getSharedNoteLandingMetadata",
+        "summary": "Метаданные статической landing-страницы для Caddy",
+        "security": [],
+        "description": "Служебный публичный маршрут для статического HTML-шаблона Caddy на обоих доменах. Тело — стандартный base64 от JSON со свойствами Status, Title, Description, Date, Image, URL, AppStoreURL, PlayStoreURL, DeepLink, Message. Base64 предотвращает интерпретацию содержимого заметки как инструкций шаблона. HTTP 200 возвращается также для неизвестной, удалённой или истёкшей заметки; итоговый код страницы задаёт Status внутри JSON: 200, 404, 410 или 503. Flutter продолжает получать данные заметки через GET /api/v1/notes/shared/{token}.",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{12}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Base64 JSON-объект с метаданными и кодом Status для HTML-страницы. Ответ не кэшируется.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/s/{token}": {
       "get": {
         "tags": [
@@ -2462,7 +2497,7 @@
         ],
         "responses": {
           "200": {
-            "description": "HTML с Open Graph и ссылкой timeleak://note/{token}",
+            "description": "HTML с Open Graph и ссылкой timeleak://share/{token}",
             "content": {
               "text/html": {
                 "schema": {
@@ -2474,9 +2509,9 @@
           "404": {
             "description": "Токен неизвестен или оригинальная заметка удалена.",
             "content": {
-              "application/json": {
+              "text/html": {
                 "schema": {
-                  "$ref": "#/components/schemas/NoteError"
+                  "type": "string"
                 }
               }
             }
@@ -2484,19 +2519,19 @@
           "410": {
             "description": "Срок share-ссылки истёк.",
             "content": {
-              "application/json": {
+              "text/html": {
                 "schema": {
-                  "$ref": "#/components/schemas/NoteError"
+                  "type": "string"
                 }
               }
             }
           },
-          "500": {
-            "description": "Внутренняя ошибка сервера.",
+          "503": {
+            "description": "HTML-страница временной недоступности заметки.",
             "content": {
-              "application/json": {
+              "text/html": {
                 "schema": {
-                  "$ref": "#/components/schemas/NoteError"
+                  "type": "string"
                 }
               }
             }
@@ -3613,7 +3648,7 @@
         ],
         "responses": {
           "200": {
-            "description": "HTML с Open Graph, ссылкой timeleak://note/{token} и переходом в магазин по платформе",
+            "description": "HTML с Open Graph, ссылкой timeleak://share/{token} и переходом в магазин по платформе",
             "content": {
               "text/html": {
                 "schema": {
@@ -3625,9 +3660,9 @@
           "404": {
             "description": "Токен неизвестен или оригинальная заметка удалена.",
             "content": {
-              "application/json": {
+              "text/html": {
                 "schema": {
-                  "$ref": "#/components/schemas/NoteError"
+                  "type": "string"
                 }
               }
             }
@@ -3635,25 +3670,25 @@
           "410": {
             "description": "Срок share-ссылки истёк.",
             "content": {
-              "application/json": {
+              "text/html": {
                 "schema": {
-                  "$ref": "#/components/schemas/NoteError"
+                  "type": "string"
                 }
               }
             }
           },
-          "500": {
-            "description": "Внутренняя ошибка сервера.",
+          "503": {
+            "description": "HTML-страница временной недоступности заметки.",
             "content": {
-              "application/json": {
+              "text/html": {
                 "schema": {
-                  "$ref": "#/components/schemas/NoteError"
+                  "type": "string"
                 }
               }
             }
           }
         },
-        "description": "HTTPS-ссылка https://timeleak.kz/share/{token} открывает установленное приложение через Universal Links / App Links. Если открыт браузер, HTML перенаправляет iOS в App Store, Android в Google Play; на компьютере показывает превью и оба магазина. После установки повторно откройте share-ссылку. OG title/description/image/url доступны мессенджерам."
+        "description": "HTTPS-ссылка https://timeleak.kz/share/{token} открывает установленное приложение через Universal Links / App Links. На timeleak.kz и api.timeleak.kz Caddy отдаёт статический HTML-шаблон из deploy/share; динамические OG-данные заметки получает из /api/v1/notes/shared/{token}/landing как base64 JSON. Если открыт браузер, страница перенаправляет iOS в App Store, Android в Google Play; на компьютере показывает превью и оба магазина. Кнопка «Открыть в приложении» использует timeleak://share/{token}. После установки повторно откройте share-ссылку. Невалидные и истёкшие ссылки показывают HTML-страницу с понятным сообщением."
       }
     },
     "/.well-known/apple-app-site-association": {
@@ -3664,7 +3699,7 @@
         "operationId": "getAppleAppSiteAssociation",
         "summary": "Ассоциации iOS Universal Links",
         "security": [],
-        "description": "Публичный JSON без редиректов. Должен быть доступен на https://timeleak.kz/.well-known/apple-app-site-association.",
+        "description": "Публичный JSON без редиректов. Доступен на https://timeleak.kz/.well-known/apple-app-site-association и https://api.timeleak.kz/.well-known/apple-app-site-association. Поддерживает пути /share/* и /api/v1/notes/shared/*.",
         "responses": {
           "200": {
             "description": "JSON ассоциаций приложения.",
@@ -3721,7 +3756,8 @@
                       {
                         "appID": "9YQXS629VS.kz.timeleak.project.app",
                         "paths": [
-                          "/share/*"
+                          "/share/*",
+                          "/api/v1/notes/shared/*"
                         ]
                       }
                     ]
@@ -3751,7 +3787,7 @@
         "operationId": "getAndroidAssetLinks",
         "summary": "Ассоциации Android App Links",
         "security": [],
-        "description": "Публичный JSON без редиректов. Должен быть доступен на https://timeleak.kz/.well-known/assetlinks.json.",
+        "description": "Публичный JSON без редиректов. Доступен на https://timeleak.kz/.well-known/assetlinks.json и https://api.timeleak.kz/.well-known/assetlinks.json. package_name совпадает с опубликованным Android applicationId kz.timeleak.app. SHA256 должен соответствовать сертификату установленной сборки; если Play App Signing использует другой ключ, добавьте его отпечаток отдельно от upload/local сертификата.",
         "responses": {
           "200": {
             "description": "JSON ассоциаций приложения.",
@@ -3804,7 +3840,7 @@
                     ],
                     "target": {
                       "namespace": "android_app",
-                      "package_name": "kz.timeleak.project.app",
+                      "package_name": "kz.timeleak.app",
                       "sha256_cert_fingerprints": [
                         "D2:62:FF:B6:A9:02:AC:48:EA:00:1B:B7:2A:89:A0:E3:31:8B:39:07:E8:05:92:B7:BF:F3:5C:A8:D6:DD:A0:19"
                       ]

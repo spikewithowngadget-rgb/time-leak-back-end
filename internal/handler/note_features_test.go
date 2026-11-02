@@ -191,7 +191,7 @@ func TestNoteFeaturesSharingExpiryPermissionsAndSignedFiles(t *testing.T) {
 	requireNoteStatus(t, resp, 200)
 	html, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(html), `property="og:title" content="Семья"`) || !strings.Contains(string(html), "timeleak://note/"+share.Token) || strings.Contains(string(html), "ZgotmplZ") {
+	if !strings.Contains(string(html), `property="og:title" content="Семья"`) || !strings.Contains(string(html), "timeleak://share/"+share.Token) || strings.Contains(string(html), "ZgotmplZ") {
 		t.Fatalf("bad OG page: %s", html)
 	}
 	previewStart := strings.Index(string(html), `property="og:image" content="`) + len(`property="og:image" content="`)

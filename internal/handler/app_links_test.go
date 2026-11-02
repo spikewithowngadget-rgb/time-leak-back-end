@@ -17,12 +17,12 @@ func TestAppLinkAssociations(t *testing.T) {
 	f := newNotesFixture(t)
 	f.cfg.Sharing = config.SharingConfig{
 		AppleAppID:                    "9YQXS629VS.kz.timeleak.project.app",
-		AndroidPackageName:            "kz.timeleak.project.app",
+		AndroidPackageName:            "kz.timeleak.app",
 		AndroidSHA256CertFingerprints: []string{androidFingerprint},
 	}
 	for _, tc := range []struct{ path, want string }{
-		{"/.well-known/apple-app-site-association", `{"applinks":{"apps":[],"details":[{"appID":"9YQXS629VS.kz.timeleak.project.app","paths":["/share/*"]}]}}`},
-		{"/.well-known/assetlinks.json", `[{"relation":["delegate_permission/common.handle_all_urls"],"target":{"namespace":"android_app","package_name":"kz.timeleak.project.app","sha256_cert_fingerprints":["` + androidFingerprint + `"]}}]`},
+		{"/.well-known/apple-app-site-association", `{"applinks":{"apps":[],"details":[{"appID":"9YQXS629VS.kz.timeleak.project.app","paths":["/share/*","/api/v1/notes/shared/*"]}]}}`},
+		{"/.well-known/assetlinks.json", `[{"relation":["delegate_permission/common.handle_all_urls"],"target":{"namespace":"android_app","package_name":"kz.timeleak.app","sha256_cert_fingerprints":["` + androidFingerprint + `"]}}]`},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			resp := doReq(t, f.srv.URL, http.MethodGet, tc.path, nil)
@@ -58,7 +58,7 @@ func TestShareURLUsesPublicDomainAndFallbackPage(t *testing.T) {
 	f.cfg.Sharing = config.SharingConfig{
 		PublicBaseURL:      "https://timeleak.kz",
 		AppleAppStoreID:    "6762095094",
-		AndroidPackageName: "kz.timeleak.project.app",
+		AndroidPackageName: "kz.timeleak.app",
 	}
 	note := createFeatureNote(t, f, map[string]any{"note_type": "calendar", "title": "Планы", "note_date": "2036-10-19"})
 	resp := doReqAuth(t, f.srv.URL, http.MethodPost, "/api/v1/auth/notes/"+note.ID+"/share", nil, f.tokens[0])
@@ -81,9 +81,9 @@ func TestShareURLUsesPublicDomainAndFallbackPage(t *testing.T) {
 		}
 		for _, want := range []string{
 			`property="og:url" content="` + share.URL + `"`,
-			`href="timeleak://note/` + share.Token + `"`,
+			`href="timeleak://share/` + share.Token + `"`,
 			`href="https://apps.apple.com/app/id6762095094"`,
-			`href="https://play.google.com/store/apps/details?id=kz.timeleak.project.app"`,
+			`href="https://play.google.com/store/apps/details?id=kz.timeleak.app"`,
 			`location.replace(storeURL)`,
 		} {
 			if !strings.Contains(string(body), want) {

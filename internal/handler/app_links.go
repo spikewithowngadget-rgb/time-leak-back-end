@@ -15,7 +15,7 @@ func (h *Handler) AppleAppSiteAssociation(w http.ResponseWriter, r *http.Request
 			"apps": []string{},
 			"details": []map[string]any{{
 				"appID": h.cfg.Sharing.AppleAppID,
-				"paths": []string{"/share/*"},
+				"paths": []string{"/share/*", "/api/v1/notes/shared/*"},
 			}},
 		},
 	})

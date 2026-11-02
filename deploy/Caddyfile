@@ -1,34 +1,88 @@
-# Caddyfile
+# The HTML and assets are deployed from deploy/share to /srv/timeleak-share.
+# Only this trusted HTML template is evaluated; note content arrives as base64
+# metadata so Caddy never evaluates user-supplied template expressions.
+(share_landing) {
+	handle /share/* {
+		root * /srv/timeleak-share
+		header {
+			Cache-Control "no-store"
+			Referrer-Policy "no-referrer"
+			X-Content-Type-Options "nosniff"
+			Content-Security-Policy "default-src 'none'; img-src 'self' https://timeleak.kz https://api.timeleak.kz; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+		}
+		route {
+			@validShare path_regexp share ^/share/([A-Za-z0-9_-]{12})/?$
+			handle @validShare {
+				rewrite * /index.html
+				templates {
+					mime text/html
+				}
+				file_server
+			}
+			handle {
+				rewrite * /error.html
+				file_server {
+					status 404
+				}
+			}
+		}
+	}
+
+	handle /share-assets/* {
+		root * /srv/timeleak-share
+		uri strip_prefix /share-assets
+		header {
+			Cache-Control "public, max-age=3600"
+			X-Content-Type-Options "nosniff"
+		}
+		file_server {
+			hide *.html
+		}
+	}
+
+	handle_errors {
+		@shareError expression `{http.request.orig_uri.path}.startsWith('/share/') || {http.request.orig_uri.path}.startsWith('/share-assets/')`
+		handle @shareError {
+			root * /srv/timeleak-share
+			header {
+				Cache-Control "no-store"
+				Referrer-Policy "no-referrer"
+				X-Content-Type-Options "nosniff"
+			}
+			rewrite * /error.html
+			file_server
+		}
+		handle {
+			respond "" {err.status_code}
+		}
+	}
+}
+
 timeleak.kz {
-	# Enable automatic HTTPS with your email for Let's Encrypt
 	tls erkinbekly@gmail.com
-
-	@sharing path /.well-known/apple-app-site-association /.well-known/assetlinks.json /share/* /s/* /api/v1/notes/shared/*
-	reverse_proxy @sharing localhost:8081
-
-	# Admin site
-	reverse_proxy localhost:8080
-
-	# Enable compression
 	encode gzip
+	import share_landing
 
-	# Log requests
+	@sharingAPI path /.well-known/apple-app-site-association /.well-known/assetlinks.json /s/* /api/v1/notes/shared/*
+	handle @sharingAPI {
+		reverse_proxy localhost:8081
+	}
+	# Admin site
+	handle {
+		reverse_proxy localhost:8080
+	}
 	log {
 		output file /var/lib/caddy/logs/timeleak.kz.log
 	}
 }
 
 api.timeleak.kz {
-	# Enable automatic HTTPS with your email for Let's Encrypt
 	tls erkinbekly@gmail.com
-
-	# Reverse proxy to your app on port 8081
-	reverse_proxy localhost:8081
-
-	# Enable compression
 	encode gzip
-
-	# Log requests
+	import share_landing
+	handle {
+		reverse_proxy localhost:8081
+	}
 	log {
 		output file /var/lib/caddy/logs/api.timeleak.kz.log
 	}

@@ -11,7 +11,7 @@ func TestSharingConfigAppLinks(t *testing.T) {
 	t.Setenv("PUBLIC_BASE_URL", "https://timeleak.kz/")
 	t.Setenv("APPLE_APP_ID", "9YQXS629VS.kz.timeleak.project.app")
 	t.Setenv("APPLE_APP_STORE_ID", "6762095094")
-	t.Setenv("ANDROID_PACKAGE_NAME", "kz.timeleak.project.app")
+	t.Setenv("ANDROID_PACKAGE_NAME", "kz.timeleak.app")
 	t.Setenv("ANDROID_SHA256_CERT_FINGERPRINTS", strings.ToLower(testAndroidFingerprint)+", "+strings.Repeat("AA:", 31)+"AA")
 	cfg, err := loadSharingConfig()
 	if err != nil {
@@ -23,8 +23,19 @@ func TestSharingConfigAppLinks(t *testing.T) {
 	if len(cfg.AndroidSHA256CertFingerprints) != 2 || cfg.AndroidSHA256CertFingerprints[0] != testAndroidFingerprint {
 		t.Fatalf("fingerprints were not normalized: %v", cfg.AndroidSHA256CertFingerprints)
 	}
-	if cfg.AppStoreURL() != "https://apps.apple.com/app/id6762095094" || cfg.PlayStoreURL() != "https://play.google.com/store/apps/details?id=kz.timeleak.project.app" {
+	if cfg.AppStoreURL() != "https://apps.apple.com/app/id6762095094" || cfg.PlayStoreURL() != "https://play.google.com/store/apps/details?id=kz.timeleak.app" {
 		t.Fatal("incorrect store URLs")
+	}
+}
+
+func TestSharingConfigDefaultAndroidApplicationID(t *testing.T) {
+	t.Setenv("ANDROID_PACKAGE_NAME", "")
+	cfg, err := loadSharingConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AndroidPackageName != "kz.timeleak.app" || cfg.PlayStoreURL() != "https://play.google.com/store/apps/details?id=kz.timeleak.app" {
+		t.Fatalf("unexpected default Android application ID: %q", cfg.AndroidPackageName)
 	}
 }
 
