@@ -119,6 +119,7 @@ type Services struct {
 	Ads       IAdsService
 	Admin     IAdminAuthService
 	Analytics IAnalyticsService
+	Reminders IAdminReminderService
 }
 
 func NewServices(
@@ -144,6 +145,8 @@ func NewServices(
 	adsService := NewAdsService(repositories.Auth, log)
 	adminService := NewAdminAuthService(appConfig.Admin, jwtService, log)
 	analyticsService := NewAnalyticsService(repositories.Auth, log)
+	reminderService := NewReminderService(repositories.Auth, NewResendSender(appConfig.Resend, appConfig.OTP.ExpiresIn, log), appConfig.Sharing.PublicBaseURL, log)
+	go reminderService.Run(ctx)
 
 	return &Services{
 		App:       appService,
@@ -153,5 +156,6 @@ func NewServices(
 		Ads:       adsService,
 		Admin:     adminService,
 		Analytics: analyticsService,
+		Reminders: reminderService,
 	}
 }

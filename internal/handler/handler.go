@@ -23,6 +23,7 @@ type Handler struct {
 	ads       service.IAdsService
 	admin     service.IAdminAuthService
 	analytics service.IAnalyticsService
+	reminders service.IAdminReminderService
 	cfg       *config.Config
 	log       *zap.Logger
 	noteLocks [64]sync.Mutex
@@ -40,6 +41,7 @@ func New(services *service.Services, cfg *config.Config, log *zap.Logger) *Handl
 		ads:       services.Ads,
 		admin:     services.Admin,
 		analytics: services.Analytics,
+		reminders: services.Reminders,
 		cfg:       cfg,
 		log:       log,
 	}
@@ -56,6 +58,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/otp/verify", h.AuthOTPVerify)
 	mux.HandleFunc("POST /api/v1/auth/email-otp/request", h.AuthEmailOTPRequest)
 	mux.HandleFunc("POST /api/v1/auth/email-otp/verify", h.AuthEmailOTPVerify)
+	mux.HandleFunc("GET /api/v1/auth/email-reminders", h.GetEmailReminderContact)
+	mux.HandleFunc("POST /api/v1/auth/email-reminders/verify", h.VerifyEmailReminderContact)
+	mux.HandleFunc("PUT /api/v1/auth/email-reminders", h.UpdateEmailReminderContact)
 	mux.HandleFunc("POST /api/v1/auth/register", h.AuthRegisterComplete)
 	mux.HandleFunc("POST /api/v1/auth/login", h.AuthLogin)
 	mux.HandleFunc("POST /api/v1/auth/password-reset/otp/request", h.AuthPasswordResetOTPRequest)
@@ -89,6 +94,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/ads/next", h.AdsNext)
 
 	mux.HandleFunc("POST /api/v1/admin/auth/login", h.AdminLogin)
+	mux.HandleFunc("GET /api/v1/admin/reminders/settings", h.AdminGetReminderSettings)
+	mux.HandleFunc("PUT /api/v1/admin/reminders/settings", h.AdminUpdateReminderSettings)
+	mux.HandleFunc("GET /api/v1/admin/reminders/status", h.AdminReminderStatus)
 	mux.HandleFunc("POST /api/v1/admin/ads", h.AdminCreateAd)
 	mux.HandleFunc("PUT /api/v1/admin/ads/{id}", h.AdminUpdateAd)
 	mux.HandleFunc("DELETE /api/v1/admin/ads/{id}", h.AdminDeleteAd)

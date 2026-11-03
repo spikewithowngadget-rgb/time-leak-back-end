@@ -34,6 +34,10 @@
     {
       "name": "Documentation",
       "description": "Swagger UI и OpenAPI JSON."
+    },
+    {
+      "name": "Email reminders",
+      "description": "Отдельная подтверждённая почта текущего пользователя для будущих напоминаний. Существующие Flutter auth/notes контракты не меняются."
     }
   ],
   "paths": {
@@ -3909,6 +3913,578 @@
           }
         }
       }
+    },
+    "/api/v1/auth/email-reminders": {
+      "get": {
+        "summary": "Почта текущего пользователя для напоминаний",
+        "description": "Возвращает только собственный контакт по uid из Bearer. При отсутствии контакта: email=\"\", verified_at=null, enabled=false. Не меняет users.email, телефон, пароль или мобильную авторизацию.",
+        "tags": [
+          "Email reminders"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Успешно",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailReminderContact"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bearer токен отсутствует, недействителен или истёк.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Неподходящая роль или аккаунт отключён.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Сервис напоминаний недоступен.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Пользователь не найден.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Включить или отключить свои email-напоминания",
+        "description": "enabled обязателен. Для true нужна подтверждённая почта. false без контакта идемпотентен. Отсутствие language сохраняет язык. Запрос сам не отправляет напоминание.",
+        "tags": [
+          "Email reminders"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Успешно",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailReminderContact"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bearer токен отсутствует, недействителен или истёк.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Неподходящая роль или аккаунт отключён.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Сервис напоминаний недоступен.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректное тело, неизвестные поля или недопустимые параметры.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Пользователь не найден.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateEmailReminderContactRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/email-reminders/verify": {
+      "post": {
+        "summary": "Подтвердить почту для напоминаний",
+        "description": "Сначала запросите код существующим POST /api/v1/auth/email-otp/request. Передайте request_id и код сразу сюда: отдельный /email-otp/verify потребляет код. Email берётся только из проверенной OTP-записи, пользователь — только из Bearer uid; поля email и user_id запрещены. Код одноразовый; users.email и мобильная авторизация не меняются. enabled по умолчанию false.",
+        "tags": [
+          "Email reminders"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Успешно",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailReminderContact"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bearer токен отсутствует, недействителен или истёк.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Неподходящая роль или аккаунт отключён.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Сервис напоминаний недоступен.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректное тело, неизвестные поля или недопустимые параметры.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Слишком частый запрос, исчерпан лимит за 24 часа или временная блокировка. Дождитесь Retry-After; клиенту не нужно повторять запрос в цикле.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailOTPRateError"
+                },
+                "examples": {
+                  "cooldown": {
+                    "summary": "Ещё не прошла пауза между письмами",
+                    "value": {
+                      "error": "email otp request is too frequent",
+                      "retry_after_seconds": 32
+                    }
+                  },
+                  "dailyLimit": {
+                    "summary": "Исчерпан лимит запросов на этот email",
+                    "value": {
+                      "error": "email otp daily request limit reached",
+                      "retry_after_seconds": 3600
+                    }
+                  },
+                  "locked": {
+                    "summary": "Слишком много неверных кодов",
+                    "value": {
+                      "error": "email otp temporarily locked",
+                      "retry_after_seconds": 120
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Пауза в секундах, столько же в retry_after_seconds.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Пользователь не найден.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEmailReminderContactRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/reminders/settings": {
+      "get": {
+        "summary": "Глобальные настройки email-напоминаний",
+        "description": "Только admin Bearer. По умолчанию enabled=true, days_before=3, send_hour=9, timezone=Asia/Almaty.",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Успешно",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReminderSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bearer токен отсутствует, недействителен или истёк.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Неподходящая роль или аккаунт отключён.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Сервис напоминаний недоступен.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Изменить глобальное расписание напоминаний",
+        "description": "Только admin Bearer. Полная замена четырёх редактируемых полей; все обязательны. days_before: 1..30 (пресеты 1/3/7/14/30), send_hour: 0..23, timezone: IANA. По умолчанию ежедневно за 3, 2 и 1 день до заметки в 09:00 Asia/Almaty. Никогда не отправляет в сам день события или после него. Выключение отменяет будущие задания. Сохранение настроек не является командой отправки письма.",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Успешно",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReminderSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bearer токен отсутствует, недействителен или истёк.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Неподходящая роль или аккаунт отключён.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Сервис напоминаний недоступен.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректное тело, неизвестные поля или недопустимые параметры.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateReminderSettingsRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/reminders/status": {
+      "get": {
+        "summary": "Агрегированное состояние email-напоминаний",
+        "description": "Только admin Bearer. Счётчики очереди/отправки/ошибок/отмен и даты работы планировщика. Адреса получателей, содержимое заметок и секреты не возвращаются. Ручной команды отправки нет.",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Успешно",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReminderStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bearer токен отсутствует, недействителен или истёк.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Неподходящая роль или аккаунт отключён.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Сервис напоминаний недоступен.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -6143,6 +6719,278 @@
           "latitude",
           "longitude"
         ]
+      },
+      "EmailReminderContact": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "email",
+          "verified_at",
+          "enabled",
+          "language"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "Подтверждённый email для напоминаний; пустая строка, если ещё не задан."
+          },
+          "verified_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "language": {
+            "type": "string",
+            "enum": [
+              "",
+              "kk",
+              "kz",
+              "ru",
+              "en",
+              "zh",
+              "hi",
+              "fr",
+              "de",
+              "es",
+              "it",
+              "pt",
+              "ar"
+            ],
+            "description": "Пустая строка использует язык пользователя. kz нормализуется в kk. Шаблоны писем: kk/ru/en/zh/hi/fr/de/es/it/pt/ar; неизвестный язык использует английский."
+          }
+        },
+        "example": {
+          "email": "owner@example.com",
+          "verified_at": "2026-11-04T04:00:00Z",
+          "enabled": true,
+          "language": "ru"
+        }
+      },
+      "VerifyEmailReminderContactRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "code"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^[0-9]{4}$"
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Явное согласие на будущие напоминания."
+          },
+          "language": {
+            "type": "string",
+            "enum": [
+              "",
+              "kk",
+              "kz",
+              "ru",
+              "en",
+              "zh",
+              "hi",
+              "fr",
+              "de",
+              "es",
+              "it",
+              "pt",
+              "ar"
+            ],
+            "description": "Пустая строка использует язык пользователя. kz нормализуется в kk. Шаблоны писем: kk/ru/en/zh/hi/fr/de/es/it/pt/ar; неизвестный язык использует английский."
+          }
+        }
+      },
+      "UpdateEmailReminderContactRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "true разрешено только после подтверждения почты; false отключает будущие письма."
+          },
+          "language": {
+            "type": "string",
+            "enum": [
+              "",
+              "kk",
+              "kz",
+              "ru",
+              "en",
+              "zh",
+              "hi",
+              "fr",
+              "de",
+              "es",
+              "it",
+              "pt",
+              "ar"
+            ],
+            "description": "Пустая строка использует язык пользователя. kz нормализуется в kk. Шаблоны писем: kk/ru/en/zh/hi/fr/de/es/it/pt/ar; неизвестный язык использует английский."
+          }
+        }
+      },
+      "UpdateReminderSettingsRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "enabled",
+          "days_before",
+          "send_hour",
+          "timezone"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "days_before": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "default": 3,
+            "description": "Ежедневно за N,N-1,...,1 день до заметки; не в день события и не после."
+          },
+          "send_hour": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 23,
+            "default": 9,
+            "description": "Час отправки в указанном часовом поясе."
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "default": "Asia/Almaty",
+            "description": "Валидное имя IANA, например Asia/Almaty. Local запрещено."
+          }
+        },
+        "example": {
+          "enabled": true,
+          "days_before": 3,
+          "send_hour": 9,
+          "timezone": "Asia/Almaty"
+        }
+      },
+      "ReminderSettings": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "enabled",
+          "days_before",
+          "send_hour",
+          "timezone",
+          "revision",
+          "updated_at"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "days_before": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "default": 3,
+            "description": "Ежедневно за N,N-1,...,1 день до заметки; не в день события и не после."
+          },
+          "send_hour": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 23,
+            "default": 9,
+            "description": "Час отправки в указанном часовом поясе."
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "default": "Asia/Almaty",
+            "description": "Валидное имя IANA, например Asia/Almaty. Local запрещено."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "readOnly": true
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true
+          }
+        }
+      },
+      "ReminderStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sender_configured",
+          "verified_contacts",
+          "pending",
+          "sent",
+          "failed",
+          "cancelled",
+          "last_run_at",
+          "next_run_at",
+          "last_sent_at"
+        ],
+        "properties": {
+          "sender_configured": {
+            "type": "boolean",
+            "description": "Resend настроен на сервере; секреты никогда не возвращаются."
+          },
+          "verified_contacts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pending": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sent": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cancelled": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last_run_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "next_run_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "last_sent_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "description": "Только агрегированные счётчики и даты; без email, userId, заголовков заметок и ключей провайдера."
       }
     }
   }
