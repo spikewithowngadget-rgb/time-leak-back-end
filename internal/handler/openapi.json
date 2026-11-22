@@ -1021,7 +1021,7 @@
         ],
         "operationId": "getUserNote",
         "summary": "Получить одну заметку",
-        "description": "Полная заметка текущего пользователя с URL файлов. Возвращается объект напрямую, без обертки data. Используйте для точечной синхронизации или повторного скачивания файла. Для чужого и отсутствующего UUID ответ одинаковый: 404.",
+        "description": "Полная заметка текущего пользователя с URL файлов. Возвращается объект напрямую, без обертки data. Используйте для точечной синхронизации или повторного скачивания файла. Для чужого и отсутствующего UUID ответ одинаковый: 404. Для FREQ=MONTHLY;INTERVAL=3 occurrences содержит до четырёх повторов после исходного note_date. Остальные правила в одиночном GET сохраняют occurrences=[].",
         "security": [
           {
             "BearerAuth": []
@@ -4485,6 +4485,51 @@
           }
         }
       }
+    },
+    "/api/v1/app/version": {
+      "get": {
+        "tags": [
+          "Documentation"
+        ],
+        "operationId": "getAppVersion",
+        "summary": "Последняя версия мобильного приложения",
+        "description": "Публичная проверка обновлений без авторизации. version — версия в сторах X.Y.Z; force_update=true означает обязательное обновление.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "version",
+                    "changelog",
+                    "force_update"
+                  ],
+                  "properties": {
+                    "version": {
+                      "type": "string",
+                      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+                    },
+                    "changelog": {
+                      "type": "string"
+                    },
+                    "force_update": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "example": {
+                  "version": "1.2.3",
+                  "changelog": "Добавлен повтор «Ежеквартально»",
+                  "force_update": false
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4820,9 +4865,10 @@
               "FREQ=YEARLY",
               "FREQ=MONTHLY",
               "FREQ=WEEKLY",
+              "FREQ=MONTHLY;INTERVAL=3",
               null
             ],
-            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null."
+            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null. Ежеквартально: FREQ=MONTHLY;INTERVAL=3, строка сохраняется без нормализации; шаг 3 месяца от исходного note_date, в коротком месяце — последний день, без накопления сдвига."
           },
           "title_audio": {
             "type": "string",
@@ -4887,9 +4933,10 @@
               "FREQ=YEARLY",
               "FREQ=MONTHLY",
               "FREQ=WEEKLY",
+              "FREQ=MONTHLY;INTERVAL=3",
               null
             ],
-            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null."
+            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null. Ежеквартально: FREQ=MONTHLY;INTERVAL=3, строка сохраняется без нормализации; шаг 3 месяца от исходного note_date, в коротком месяце — последний день, без накопления сдвига."
           },
           "title_audio": {
             "type": "string",
@@ -4946,9 +4993,10 @@
               "FREQ=YEARLY",
               "FREQ=MONTHLY",
               "FREQ=WEEKLY",
+              "FREQ=MONTHLY;INTERVAL=3",
               null
             ],
-            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null."
+            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null. Ежеквартально: FREQ=MONTHLY;INTERVAL=3, строка сохраняется без нормализации; шаг 3 месяца от исходного note_date, в коротком месяце — последний день, без накопления сдвига."
           },
           "title_audio": {
             "type": "string",
@@ -5091,8 +5139,10 @@
               "FREQ=YEARLY",
               "FREQ=MONTHLY",
               "FREQ=WEEKLY",
+              "FREQ=MONTHLY;INTERVAL=3",
               null
-            ]
+            ],
+            "description": "Ежеквартально: FREQ=MONTHLY;INTERVAL=3, строка сохраняется без нормализации; шаг 3 месяца от исходного note_date, в коротком месяце — последний день, без накопления сдвига."
           },
           "is_completed": {
             "type": "boolean",
@@ -5104,7 +5154,8 @@
               "type": "string",
               "format": "date",
               "description": "Виртуальная дата внутри запрошенного диапазона. Исходный note_date не изменяется."
-            }
+            },
+            "description": "В диапазоне и by-date — виртуальные даты внутри запрошенных границ. Одиночный GET ежеквартальной заметки возвращает до четырёх повторов после исходного note_date. Для one_time, остальных правил в одиночном GET и списка без диапазона — []."
           }
         },
         "example": {
@@ -5251,8 +5302,10 @@
               "FREQ=YEARLY",
               "FREQ=MONTHLY",
               "FREQ=WEEKLY",
+              "FREQ=MONTHLY;INTERVAL=3",
               null
-            ]
+            ],
+            "description": "Ежеквартально: FREQ=MONTHLY;INTERVAL=3, строка сохраняется без нормализации; шаг 3 месяца от исходного note_date, в коротком месяце — последний день, без накопления сдвига."
           },
           "is_completed": {
             "type": "boolean",
@@ -5264,7 +5317,8 @@
               "type": "string",
               "format": "date",
               "description": "Виртуальная дата внутри запрошенного диапазона. Исходный note_date не изменяется."
-            }
+            },
+            "description": "В диапазоне и by-date — виртуальные даты внутри запрошенных границ. Одиночный GET ежеквартальной заметки возвращает до четырёх повторов после исходного note_date. Для one_time, остальных правил в одиночном GET и списка без диапазона — []."
           }
         },
         "description": "Метаданные календаря без userId, note_files и title_audio_url. Для recurring бейджи строятся по occurrences, для one_time по note_date; завершённые one_time не рисуйте в сетке.",
@@ -5352,8 +5406,10 @@
               "FREQ=YEARLY",
               "FREQ=MONTHLY",
               "FREQ=WEEKLY",
+              "FREQ=MONTHLY;INTERVAL=3",
               null
-            ]
+            ],
+            "description": "Ежеквартально: FREQ=MONTHLY;INTERVAL=3, строка сохраняется без нормализации; шаг 3 месяца от исходного note_date, в коротком месяце — последний день, без накопления сдвига."
           },
           "is_completed": {
             "type": "boolean",
@@ -5365,7 +5421,8 @@
               "type": "string",
               "format": "date",
               "description": "Виртуальная дата внутри запрошенного диапазона. Исходный note_date не изменяется."
-            }
+            },
+            "description": "В диапазоне и by-date — виртуальные даты внутри запрошенных границ. Одиночный GET ежеквартальной заметки возвращает до четырёх повторов после исходного note_date. Для one_time, остальных правил в одиночном GET и списка без диапазона — []."
           }
         },
         "description": "Совместимый список без параметров: прежние поля сохранены, добавлены поля новых функций. Для календарных дат используйте диапазон или by-date. Без диапазона occurrences=[].",
@@ -5609,9 +5666,10 @@
               "FREQ=YEARLY",
               "FREQ=MONTHLY",
               "FREQ=WEEKLY",
+              "FREQ=MONTHLY;INTERVAL=3",
               null
             ],
-            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null."
+            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null. Ежеквартально: FREQ=MONTHLY;INTERVAL=3, строка сохраняется без нормализации; шаг 3 месяца от исходного note_date, в коротком месяце — последний день, без накопления сдвига."
           }
         }
       },
@@ -5663,9 +5721,10 @@
               "FREQ=YEARLY",
               "FREQ=MONTHLY",
               "FREQ=WEEKLY",
+              "FREQ=MONTHLY;INTERVAL=3",
               null
             ],
-            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null."
+            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null. Ежеквартально: FREQ=MONTHLY;INTERVAL=3, строка сохраняется без нормализации; шаг 3 месяца от исходного note_date, в коротком месяце — последний день, без накопления сдвига."
           }
         }
       },
@@ -5710,9 +5769,10 @@
               "FREQ=YEARLY",
               "FREQ=MONTHLY",
               "FREQ=WEEKLY",
+              "FREQ=MONTHLY;INTERVAL=3",
               null
             ],
-            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null."
+            "description": "Обязательно для recurring. Для one_time null. При переключении на one_time правило очищается. В multipart пустая строка означает null. Ежеквартально: FREQ=MONTHLY;INTERVAL=3, строка сохраняется без нормализации; шаг 3 месяца от исходного note_date, в коротком месяце — последний день, без накопления сдвига."
           }
         }
       },
@@ -6144,8 +6204,10 @@
               "FREQ=YEARLY",
               "FREQ=MONTHLY",
               "FREQ=WEEKLY",
+              "FREQ=MONTHLY;INTERVAL=3",
               null
-            ]
+            ],
+            "description": "Ежеквартально: FREQ=MONTHLY;INTERVAL=3, строка сохраняется без нормализации; шаг 3 месяца от исходного note_date, в коротком месяце — последний день, без накопления сдвига."
           },
           "is_completed": {
             "type": "boolean",

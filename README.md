@@ -7,7 +7,8 @@ Go backend with SQLite, JWT auth, phone-only WhatsApp OTP auth through WHAPI, no
 - API versioning under `/api/v1`
 - Existing user/profile/notes endpoints preserved
 - Notes support multipart uploads with up to `5` files per note
-- Notes have independent text/audio titles, one-time completion and yearly/monthly/weekly recurrence
+- Notes have independent text/audio titles, one-time completion and yearly/monthly/weekly/quarterly recurrence
+- Public mobile update metadata: `GET /api/v1/app/version`
 - Expiring note shares include public JSON, Open Graph previews and signed file downloads
 - Uploaded note files are stored under `./note_files/{audio|photo|video|document}`
 - Access token TTL is exactly `60s`
@@ -151,6 +152,15 @@ One-time notes are marked complete at startup and daily at 00:05 UTC when
 `note_date` is before the current UTC day. They remain available for history.
 Recurring notes are never completed automatically. List and day queries return
 virtual `occurrences` while keeping the original note ID, date and attachments.
+Quarterly notes use the exact rule `FREQ=MONTHLY;INTERVAL=3`. Repeats stay anchored
+to the original month and day, clamping to the last day of shorter months without
+drift. A single-note GET returns up to four repeats after the original date for
+this new rule; calendar range/day queries return only occurrences in that range.
+
+`GET /api/v1/app/version` requires no authentication and returns the mobile store
+release metadata: `version`, `changelog`, and `force_update`. The current release
+is `1.2.3`, with an optional update (`force_update: false`). Update
+`internal/handler/app_version.go` with each mobile store release.
 
 ## OTP: email и WhatsApp
 

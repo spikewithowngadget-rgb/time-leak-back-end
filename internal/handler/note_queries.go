@@ -104,6 +104,9 @@ func (h *Handler) AuthGetNote(w http.ResponseWriter, r *http.Request) {
 		h.writeNoteRequestError(w, err)
 		return
 	}
+	if note.RecurrenceRule != nil && *note.RecurrenceRule == domain.NoteRecurrenceQuarterly {
+		note.Occurrences = domain.NoteOccurrencePreview(note)
+	}
 	writeJSON(w, http.StatusOK, h.noteResponse(r, note))
 }
 

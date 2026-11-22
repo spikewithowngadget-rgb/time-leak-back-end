@@ -18,6 +18,15 @@ func TestNoteOccurrencesCalendarBoundaries(t *testing.T) {
 		{"2027-03-15", "FREQ=YEARLY", "2026-01-01", "2026-12-31", []string{}},
 		{"2026-01-31", "FREQ=MONTHLY", "2026-02-27", "2026-02-28", []string{"2026-02-28"}},
 		{"2026-01-31", "FREQ=MONTHLY", "2026-03-01", "2026-03-30", []string{}},
+		{"2026-11-27", NoteRecurrenceQuarterly, "2026-11-28", "2027-11-27", []string{"2027-02-27", "2027-05-27", "2027-08-27", "2027-11-27"}},
+		{"2026-03-31", NoteRecurrenceQuarterly, "2026-04-01", "2027-03-31", []string{"2026-06-30", "2026-09-30", "2026-12-31", "2027-03-31"}},
+		{"2026-11-30", NoteRecurrenceQuarterly, "2026-12-01", "2027-11-30", []string{"2027-02-28", "2027-05-30", "2027-08-30", "2027-11-30"}},
+		{"2027-11-30", NoteRecurrenceQuarterly, "2028-01-01", "2028-08-30", []string{"2028-02-29", "2028-05-30", "2028-08-30"}},
+		{"2026-03-31", NoteRecurrenceQuarterly, "2026-07-01", "2026-12-31", []string{"2026-09-30", "2026-12-31"}},
+		{"2026-03-31", NoteRecurrenceQuarterly, "2026-06-30", "2026-06-30", []string{"2026-06-30"}},
+		{"2026-03-31", NoteRecurrenceQuarterly, "2026-07-31", "2026-07-31", []string{}},
+		{"2026-03-31", NoteRecurrenceQuarterly, "2026-01-01", "2026-03-31", []string{"2026-03-31"}},
+		{"2026-11-30", NoteRecurrenceQuarterly, "9999-01-01", "9999-12-31", []string{"9999-02-28", "9999-05-30", "9999-08-30", "9999-11-30"}},
 		{"0001-01-01", "FREQ=WEEKLY", "9999-12-20", "9999-12-31", []string{"9999-12-20", "9999-12-27"}},
 	}
 	for _, tc := range tests {
@@ -26,7 +35,42 @@ func TestNoteOccurrencesCalendarBoundaries(t *testing.T) {
 			if got := NoteOccurrences(note, tc.from, tc.to); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("got %v want %v", got, tc.want)
 			}
+			if got := HasNoteOccurrence(note, tc.from, tc.to); got != (len(tc.want) > 0) {
+				t.Fatalf("HasNoteOccurrence = %v, want %v", got, len(tc.want) > 0)
+			}
 		})
+	}
+}
+
+func TestQuarterlyOccurrencePreview(t *testing.T) {
+	rule := NoteRecurrenceQuarterly
+	for _, tc := range []struct {
+		date string
+		want []string
+	}{
+		{"2026-11-30", []string{"2027-02-28", "2027-05-30", "2027-08-30", "2027-11-30"}},
+		{"9999-08-31", []string{"9999-11-30"}},
+		{"9999-12-31", []string{}},
+		{"invalid", []string{}},
+	} {
+		note := Note{NoteDate: tc.date, Lifecycle: NoteRecurring, RecurrenceRule: &rule}
+		if got := NoteOccurrencePreview(note); !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%s: got %v want %v", tc.date, got, tc.want)
+		}
+	}
+}
+
+func TestRecurrenceRulesArePreservedExactly(t *testing.T) {
+	for _, rule := range []string{"FREQ=YEARLY", "FREQ=MONTHLY", "FREQ=WEEKLY", NoteRecurrenceQuarterly} {
+		change, err := ResolveNoteMutation(Note{}, NoteMutation{Lifecycle: StringChange(NoteRecurring), RecurrenceRule: StringChange(rule)})
+		if err != nil || change.RecurrenceRule.Value == nil || *change.RecurrenceRule.Value != rule {
+			t.Fatalf("%q: change=%+v err=%v", rule, change, err)
+		}
+	}
+	for _, rule := range []string{"FREQ=MONTHLY;INTERVAL=2", "FREQ=MONTHLY;INTERVAL=03", "freq=monthly;interval=3", "INTERVAL=3;FREQ=MONTHLY", "FREQ=MONTHLY;INTERVAL=3 "} {
+		if _, err := ResolveNoteMutation(Note{}, NoteMutation{Lifecycle: StringChange(NoteRecurring), RecurrenceRule: StringChange(rule)}); err == nil {
+			t.Fatalf("unsupported rule accepted: %q", rule)
+		}
 	}
 }
 

@@ -49,6 +49,7 @@ func New(services *service.Services, cfg *config.Config, log *zap.Logger) *Handl
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", h.Health)
+	mux.HandleFunc("GET /api/v1/app/version", h.AppVersion)
 	mux.HandleFunc("GET /swagger", h.SwaggerUI)
 	mux.HandleFunc("GET /swagger.json", h.SwaggerJSON)
 	mux.HandleFunc("GET /.well-known/apple-app-site-association", h.AppleAppSiteAssociation)

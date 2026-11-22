@@ -125,6 +125,23 @@ func TestReminderWorkerRecurringClampingAndUTCDateBoundary(t *testing.T) {
 		t.Fatalf("recurrence=%+v", f.sender.deliveries)
 	}
 }
+
+func TestReminderWorkerQuarterlyClampingWithoutMonthlyDelivery(t *testing.T) {
+	f := newReminderServiceFixture(t)
+	f.exec(t, `UPDATE notes SET lifecycle='recurring',recurrence_rule='FREQ=MONTHLY;INTERVAL=3',note_date='2025-11-30' WHERE id=?`, f.noteID)
+	f.tick(t, time.Date(2026, 2, 25, 4, 0, 0, 0, time.UTC))
+	if f.sender.count() != 1 || f.sender.deliveries[0].OccurrenceDate != "2026-02-28" {
+		t.Fatalf("quarterly February reminder: %+v", f.sender.deliveries)
+	}
+	f.tick(t, time.Date(2026, 3, 27, 4, 0, 0, 0, time.UTC))
+	if f.sender.count() != 1 {
+		t.Fatalf("unexpected monthly reminder: %+v", f.sender.deliveries)
+	}
+	f.tick(t, time.Date(2026, 5, 27, 4, 0, 0, 0, time.UTC))
+	if f.sender.count() != 2 || f.sender.deliveries[1].OccurrenceDate != "2026-05-30" {
+		t.Fatalf("quarterly May reminder drifted: %+v", f.sender.deliveries)
+	}
+}
 func TestReminderWorkerConsentCompletionAndInactiveAccounts(t *testing.T) {
 	for _, update := range []string{`UPDATE user_email_reminder_contacts SET enabled=0`, `UPDATE users SET is_active=0`, `UPDATE notes SET is_completed=1`, `DELETE FROM user_email_reminder_contacts`, `UPDATE user_email_reminder_contacts SET email='wa_example@otp.local'`} {
 		t.Run(update, func(t *testing.T) {

@@ -11,11 +11,12 @@ import (
 )
 
 const (
-	NoteOneTime   = "one_time"
-	NoteRecurring = "recurring"
+	NoteOneTime             = "one_time"
+	NoteRecurring           = "recurring"
+	NoteRecurrenceQuarterly = "FREQ=MONTHLY;INTERVAL=3"
 )
 
-var ErrInvalidNoteFeatures = errors.New("title must contain at most 200 characters; lifecycle must be one_time or recurring; recurring requires FREQ=YEARLY, FREQ=MONTHLY or FREQ=WEEKLY")
+var ErrInvalidNoteFeatures = errors.New("title must contain at most 200 characters; lifecycle must be one_time or recurring; recurring requires FREQ=YEARLY, FREQ=MONTHLY, FREQ=WEEKLY or FREQ=MONTHLY;INTERVAL=3")
 
 // OptionalString distinguishes an omitted update field from an explicit null.
 type OptionalString struct {
@@ -77,7 +78,12 @@ func ResolveNoteMutation(existing Note, changes NoteMutation) (NoteMutation, err
 		}
 		rule = nil
 	case NoteRecurring:
-		if rule == nil || (*rule != "FREQ=YEARLY" && *rule != "FREQ=MONTHLY" && *rule != "FREQ=WEEKLY") {
+		if rule == nil {
+			return changes, ErrInvalidNoteFeatures
+		}
+		switch *rule {
+		case "FREQ=YEARLY", "FREQ=MONTHLY", "FREQ=WEEKLY", NoteRecurrenceQuarterly:
+		default:
 			return changes, ErrInvalidNoteFeatures
 		}
 	default:
@@ -107,6 +113,15 @@ func NoteOccurrences(note Note, from, to string) []string {
 
 func HasNoteOccurrence(note Note, from, to string) bool {
 	return len(noteOccurrences(note, from, to, 1)) > 0
+}
+
+// NoteOccurrencePreview returns up to four repeats after the original note date.
+func NoteOccurrencePreview(note Note) []string {
+	start, err := time.Parse(time.DateOnly, note.NoteDate)
+	if err != nil {
+		return []string{}
+	}
+	return noteOccurrences(note, start.AddDate(0, 0, 1).Format(time.DateOnly), "9999-12-31", 4)
 }
 
 func noteOccurrences(note Note, from, to string, limit int) []string {
@@ -140,8 +155,21 @@ func noteOccurrences(note Note, from, to string, limit int) []string {
 			}
 			next = next.AddDate(0, 0, 7)
 		}
-	case "FREQ=MONTHLY":
-		for y, m := lo.Year(), lo.Month(); y <= hi.Year(); {
+	case "FREQ=MONTHLY", NoteRecurrenceQuarterly:
+		interval := 1
+		if *note.RecurrenceRule == NoteRecurrenceQuarterly {
+			interval = 3
+		}
+		// Align to the original month even when the requested range starts
+		// between repeats. Clamp each date from start.Day() to avoid drift.
+		months := (lo.Year()-start.Year())*12 + int(lo.Month()-start.Month())
+		months += (interval - months%interval) % interval
+		for ; ; months += interval {
+			month := int(start.Month()) - 1 + months
+			y, m := start.Year()+month/12, time.Month(month%12+1)
+			if y > hi.Year() {
+				break
+			}
 			next := clamp(y, m)
 			if next.After(hi) {
 				break
@@ -151,11 +179,6 @@ func noteOccurrences(note Note, from, to string, limit int) []string {
 				if limit > 0 && len(result) >= limit {
 					return result
 				}
-			}
-			m++
-			if m > 12 {
-				y++
-				m = 1
 			}
 		}
 	case "FREQ=YEARLY":
